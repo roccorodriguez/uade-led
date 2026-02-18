@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+/* Fondo negro puro para que no se noten los bordes en el LED */
+:root {
+  background-color: #000000;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden; /* Evita que aparezcan barras de scroll */
+  background-color: #000000;
+  /* Fuente técnica de estilo terminal */
+  font-family: 'JetBrains Mono', 'Roboto Mono', monospace;
+}
+
+/* Animación para que las noticias se desplacen horizontalmente */
+@keyframes ticker-scroll {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-100%); }
+}
+
+.animate-ticker {
+  display: inline-block;
+  white-space: nowrap;
+  animation: ticker-scroll 30s linear infinite;
+}
+
+/* Mantené tus tickers del Widget 2 intactos */
+.animate-ticker {
+  display: inline-block;
+  white-space: nowrap;
+  animation: ticker-scroll 30s linear infinite;
+}
+
+/* Solo agregamos esta clase simple para las noticias */
+.news-text-line {
+  display: inline-block;
+  white-space: nowrap;
+  will-change: transform;
+}

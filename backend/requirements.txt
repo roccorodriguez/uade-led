@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+yfinance
+beautifulsoup4
+requests
+google-genai
+edge-tts
+httpx
+python-multipart
