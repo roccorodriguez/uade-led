@@ -75,6 +75,7 @@ TICKERS_TICKER = [
 # Poné tus credenciales de Twilio acá arriba
 TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN")
+BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000")
 
 async def download_audio(url: str, filename: str):
     """Descarga el audio de Twilio siguiendo las redirecciones necesarias."""
@@ -222,7 +223,7 @@ async def receive_whatsapp(MediaUrl0: str = Form(None), From: str = Form(None)):
                 audio_path = await generate_speech(final_text)
                 await asyncio.sleep(0.5)
                 await manager.broadcast_command("AI_RESPONSE_TEXT", {"text": final_text})
-                audio_url = f"http://localhost:8000/static/response.mp3?t={int(datetime.now().timestamp())}"
+                audio_url = f"{BASE_URL}/static/response.mp3?t={int(datetime.now().timestamp())}"
                 await manager.broadcast_command("PLAY_AUDIO", {"url": audio_url})
                 
                 await manager.broadcast_command("AI_RESPONSE_TEXT", {"text": final_text})

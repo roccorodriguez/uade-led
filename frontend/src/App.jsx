@@ -22,7 +22,7 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
       setLineClip(0);
       
       try {
-        const res = await fetch(`http://localhost:8000/api/chart/${ticker}`);
+        const res = await fetch(`https://uade-led-backend.onrender.com/api/chart/${ticker}`);
         const data = await res.json();
         
         if (!isMounted.current) return;
@@ -273,11 +273,11 @@ export default function App() {
   useEffect(() => {
     const upd = async () => {
       try {
-        const p = await fetch('http://localhost:8000/api/prices').then(r => r.json());
+        const p = await fetch('https://uade-led-backend.onrender.com/api/prices').then(r => r.json());
         setPrices(p);
         
         // Nueva petición para el Widget 3
-        const n = await fetch('http://localhost:8000/api/market-news').then(r => r.json());
+        const n = await fetch('https://uade-led-backend.onrender.com/api/market-news').then(r => r.json());
         if (Array.isArray(n)) {
           setNews(n);
         }
@@ -317,7 +317,7 @@ export default function App() {
     let isMounted = true; // Control para no actuar si el componente se desmontó
   
     const connect = () => {
-      socket = new WebSocket('ws://localhost:8000/ws');
+      socket = new WebSocket('ws://uade-led-backend.onrender.com:8000/ws');
   
       socket.onopen = () => {
         if (isMounted) console.log("✅ Conectado al Backend (Real-Time)");
