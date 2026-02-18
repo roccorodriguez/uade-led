@@ -317,7 +317,7 @@ export default function App() {
     let isMounted = true; // Control para no actuar si el componente se desmontó
   
     const connect = () => {
-      socket = new WebSocket('ws://uade-led-backend.onrender.com:8000/ws');
+      socket = new WebSocket('wss://uade-led-backend.onrender.com/ws');
   
       socket.onopen = () => {
         if (isMounted) console.log("✅ Conectado al Backend (Real-Time)");
