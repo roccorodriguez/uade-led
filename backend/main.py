@@ -223,7 +223,7 @@ async def receive_whatsapp(MediaUrl0: str = Form(None), From: str = Form(None)):
                 audio_path = await generate_speech(final_text)
                 await asyncio.sleep(0.5)
                 await manager.broadcast_command("AI_RESPONSE_TEXT", {"text": final_text})
-                audio_url = f"https://uade-led-backend.onrender.com/static/response.mp3?t={int(datetime.now().timestamp())}"
+                audio_url = f"{BASE_URL}/static/response.mp3?t={int(datetime.now().timestamp())}"
                 await manager.broadcast_command("PLAY_AUDIO", {"url": audio_url})
                 
                 await manager.broadcast_command("AI_RESPONSE_TEXT", {"text": final_text})

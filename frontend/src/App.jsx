@@ -22,7 +22,7 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
       setLineClip(0);
       
       try {
-        const res = await fetch(`https://uade-led-backend.onrender.com/api/chart/${ticker}`);
+        const res = await fetch(`${API_BASE}/api/chart/${ticker}`);
         const data = await res.json();
         
         if (!isMounted.current) return;
@@ -264,6 +264,8 @@ export default function App() {
   const [isAiActive, setIsAiActive] = useState(false);
   const [audioData, setAudioData] = useState(new Uint8Array(0));
   const [isVoicePlaying, setIsVoicePlaying] = useState(false);
+  const API_BASE = import.meta.env.VITE_API_URL;
+  const WS_BASE = import.meta.env.VITE_WS_URL;
 
   useEffect(() => {
     const pulse = setInterval(() => setMasterTime(new Date()), 1000);
@@ -273,11 +275,11 @@ export default function App() {
   useEffect(() => {
     const upd = async () => {
       try {
-        const p = await fetch('https://uade-led-backend.onrender.com/api/prices').then(r => r.json());
+        const p = await fetch('${API_BASE}/api/prices').then(r => r.json());
         setPrices(p);
         
         // Nueva petición para el Widget 3
-        const n = await fetch('https://uade-led-backend.onrender.com/api/market-news').then(r => r.json());
+        const n = await fetch('${API_BASE}/api/market-news').then(r => r.json());
         if (Array.isArray(n)) {
           setNews(n);
         }
@@ -317,7 +319,7 @@ export default function App() {
     let isMounted = true; // Control para no actuar si el componente se desmontó
   
     const connect = () => {
-      socket = new WebSocket('wss://uade-led-backend.onrender.com/ws');
+      socket = new WebSocket('${WS_BASE}/ws');
   
       socket.onopen = () => {
         if (isMounted) console.log("✅ Conectado al Backend (Real-Time)");
