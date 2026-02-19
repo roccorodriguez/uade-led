@@ -40,3 +40,15 @@
 .read-the-docs {
   color: #888;
 }
+
+/* Flash animations para actualizaciones de precios (Bloomberg-style) */
+@keyframes flashUp {
+  0% { background-color: rgba(74, 222, 128, 0.3); }
+  100% { background-color: transparent; }
+}
+@keyframes flashDown {
+  0% { background-color: rgba(248, 113, 113, 0.3); }
+  100% { background-color: transparent; }
+}
+.flash-up { animation: flashUp 800ms ease-out; }
+.flash-down { animation: flashDown 800ms ease-out; }
