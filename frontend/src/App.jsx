@@ -3,6 +3,8 @@ import Chart from 'react-apexcharts';
 import { TrendingUp } from 'lucide-react';
 import { motion, useTime, useTransform } from 'framer-motion';
 
+const API_BASE = import.meta.env.VITE_API_URL;
+const WS_BASE = import.meta.env.VITE_WS_URL;
 
 const TICKERS_ROTATION = ["NVDA", "MSFT", "GOOG", "META", "TSLA", "AMZN", "AAPL"];
 
@@ -264,8 +266,6 @@ export default function App() {
   const [isAiActive, setIsAiActive] = useState(false);
   const [audioData, setAudioData] = useState(new Uint8Array(0));
   const [isVoicePlaying, setIsVoicePlaying] = useState(false);
-  const API_BASE = import.meta.env.VITE_API_URL;
-  const WS_BASE = import.meta.env.VITE_WS_URL;
 
   useEffect(() => {
     const pulse = setInterval(() => setMasterTime(new Date()), 1000);
