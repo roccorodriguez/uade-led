@@ -690,27 +690,27 @@ const Clock = ({ city, zone, time }) => {
             stroke={t.color} strokeWidth={t.w} strokeLinecap="round" />
         ))}
 
-        {/* Aguja de horas — gruesa y visible */}
+        {/* Aguja de horas */}
         <line x1={c} y1={c + 2} x2={c} y2={c - 9}
-          stroke="white" strokeWidth="2.5" strokeLinecap="round"
+          stroke={accent} strokeWidth="2.5" strokeLinecap="round"
           transform={`rotate(${hourDeg} ${c} ${c})`}
         />
 
-        {/* Aguja de minutos — más larga y fina */}
+        {/* Aguja de minutos */}
         <line x1={c} y1={c + 2.5} x2={c} y2={c - 14}
-          stroke="white" strokeWidth="1.5" strokeLinecap="round"
+          stroke={accent} strokeWidth="1.5" strokeLinecap="round"
           transform={`rotate(${minDeg} ${c} ${c})`}
         />
 
-        {/* Segundero con contrapeso */}
+        {/* Segundero */}
         <g transform={`rotate(${secDeg} ${c} ${c})`}>
           <line x1={c} y1={c + 4} x2={c} y2={c - 17}
-            stroke={accent} strokeWidth="0.5" strokeLinecap="round" opacity="0.7" />
-          <circle cx={c} cy={c + 3.5} r="0.9" fill={accent} opacity="0.5" />
+            stroke="white" strokeWidth="0.5" strokeLinecap="round" opacity="0.5" />
+          <circle cx={c} cy={c + 3.5} r="0.9" fill="white" opacity="0.3" />
         </g>
 
-        {/* Centro tipo joya */}
-        <circle cx={c} cy={c} r="2.2" fill="white" />
+        {/* Centro */}
+        <circle cx={c} cy={c} r="2.2" fill={accent} />
         <circle cx={c} cy={c} r="1.1" fill="#111" />
         <circle cx={c} cy={c} r="0.5" fill={accent} opacity="0.9" />
       </svg>
