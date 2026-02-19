@@ -275,11 +275,11 @@ export default function App() {
   useEffect(() => {
     const upd = async () => {
       try {
-        const p = await fetch('${API_BASE}/api/prices').then(r => r.json());
+        const p = await fetch(`${API_BASE}/api/prices`).then(r => r.json());
         setPrices(p);
         
         // Nueva petición para el Widget 3
-        const n = await fetch('${API_BASE}/api/market-news').then(r => r.json());
+        const n = await fetch(`${API_BASE}/api/market-news`).then(r => r.json());
         if (Array.isArray(n)) {
           setNews(n);
         }
@@ -319,7 +319,7 @@ export default function App() {
     let isMounted = true; // Control para no actuar si el componente se desmontó
   
     const connect = () => {
-      socket = new WebSocket('${WS_BASE}/ws');
+      socket = new WebSocket(`${WS_BASE}/ws`);
   
       socket.onopen = () => {
         if (isMounted) console.log("✅ Conectado al Backend (Real-Time)");
