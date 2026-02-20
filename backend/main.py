@@ -305,18 +305,34 @@ def get_latest_scraping():
         res = requests.get(url, headers=headers)
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # 1. Capturamos los 7 más recientes de la web
-        articles = soup.find_all('li', class_='stream-item')[:8]
+        # 1. Obtenemos TODOS los items del stream disponibles en el HTML
+        articles = soup.find_all('li', class_='stream-item')
         
         new_entries = []
         
         for art in articles:
+            # Cortamos cuando tengamos exactamente 8 noticias VÁLIDAS
+            if len(new_entries) >= 8:
+                break
+                
             try:
                 title_tag = art.find('h3')
                 if not title_tag: continue
                 headline = title_tag.text.strip().upper()
                 
                 # --- LÓGICA DE CACHÉ DE TIEMPO ---
+                pub_div = art.find('div', class_='publishing yf-bmkwve')
+                if pub_div:
+                    parts = list(pub_div.stripped_strings)
+                    source = parts[0].upper() if len(parts) > 0 else "YF"
+                    rel_time = parts[-1] if len(parts) > 1 else "0m ago"
+                else:
+                    source, rel_time = "YF", "0m ago"
+                    
+                # Filtro de fuentes
+                if source == 'STOCKSTORY' or source == 'ASSOCIATED PRESS FINANCE':
+                    continue
+
                 # Buscamos si la noticia YA está en nuestro STACK actual
                 existing_news = next((news for news in NEWS_STACK if news['headline'] == headline), None)
                 
@@ -326,14 +342,6 @@ def get_latest_scraping():
                     new_entries.append(existing_news)
                 else:
                     # SI ES NUEVA: Recién acá calculamos todo
-                    pub_div = art.find('div', class_='publishing yf-bmkwve')
-                    if pub_div:
-                        parts = list(pub_div.stripped_strings)
-                        source = parts[0].upper() if len(parts) > 0 else "YF"
-                        rel_time = parts[-1] if len(parts) > 1 else "0m ago"
-                    else:
-                        source, rel_time = "YF", "0m ago"
-
                     ticker_span = art.find('span', class_='symbol yf-1pdfbgz')
                     ticker = ticker_span.text.strip().replace("^", "") if ticker_span else "MKT"
 

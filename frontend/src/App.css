@@ -11,9 +11,11 @@
   will-change: filter;
   transition: filter 300ms;
 }
+
 .logo:hover {
   filter: drop-shadow(0 0 2em #646cffaa);
 }
+
 .logo.react:hover {
   filter: drop-shadow(0 0 2em #61dafbaa);
 }
@@ -22,6 +24,7 @@
   from {
     transform: rotate(0deg);
   }
+
   to {
     transform: rotate(360deg);
   }
@@ -43,12 +46,48 @@
 
 /* Flash animations para actualizaciones de precios (Bloomberg-style) */
 @keyframes flashUp {
-  0% { background-color: rgba(74, 222, 128, 0.3); }
-  100% { background-color: transparent; }
+  0% {
+    background-color: rgba(74, 222, 128, 0.3);
+  }
+
+  100% {
+    background-color: transparent;
+  }
 }
+
 @keyframes flashDown {
-  0% { background-color: rgba(248, 113, 113, 0.3); }
-  100% { background-color: transparent; }
+  0% {
+    background-color: rgba(248, 113, 113, 0.3);
+  }
+
+  100% {
+    background-color: transparent;
+  }
 }
-.flash-up { animation: flashUp 800ms ease-out; }
-.flash-down { animation: flashDown 800ms ease-out; }
+
+.flash-up {
+  animation: flashUp 800ms ease-out;
+}
+
+.flash-down {
+  animation: flashDown 800ms ease-out;
+}
+
+@keyframes marquee-vertical {
+  0% {
+    transform: translateY(0%);
+  }
+
+  100% {
+    transform: translateY(-50%);
+  }
+}
+
+.animate-marquee-vertical {
+  /* We'll calculate the exact duration based on content height later or use a fixed slow duration */
+  animation: marquee-vertical 40s linear infinite;
+}
+
+.animate-marquee-vertical:hover {
+  animation-play-state: paused;
+}

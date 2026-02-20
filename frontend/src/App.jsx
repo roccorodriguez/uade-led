@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Chart from 'react-apexcharts';
 import { TrendingUp } from 'lucide-react';
-import { motion, useTime, useTransform } from 'framer-motion';
+import { motion, AnimatePresence, useTime, useTransform } from 'framer-motion';
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const WS_BASE = import.meta.env.VITE_WS_URL;
@@ -13,6 +13,8 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
   const [series, setSeries] = useState([{ data: [] }]);
   const [scalesOpacity, setScalesOpacity] = useState(0);
   const [lineClip, setLineClip] = useState(0);
+  const [priceInfo, setPriceInfo] = useState(null);
+  const [labelAnim, setLabelAnim] = useState('');
   const isMounted = useRef(true);
 
   useEffect(() => {
@@ -22,6 +24,8 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
       // RESET: Todo limpio
       setScalesOpacity(0);
       setLineClip(0);
+      setLabelAnim('');
+      setPriceInfo(null);
 
       try {
         const res = await fetch(`${API_BASE}/api/chart/${ticker}`);
@@ -32,6 +36,12 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
         if (data && data.length > 0) {
           setSeries([{ name: ticker, data: data.map(d => [d.time, d.value]) }]);
 
+          // Calcular precio y variación
+          const lastPrice = data[data.length - 1].value;
+          const firstPrice = data[0].value;
+          const pctChange = ((lastPrice - firstPrice) / firstPrice * 100);
+          if (isMounted.current) setPriceInfo({ price: lastPrice, change: pctChange });
+
           // 1. ENTRADA: Fundido de escalas, luego barrido de línea
           await new Promise(r => setTimeout(r, 500));
           if (isMounted.current) setScalesOpacity(1);
@@ -39,12 +49,20 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
           await new Promise(r => setTimeout(r, 600));
           if (isMounted.current) setLineClip(100);
 
-          // 2. PAUSA: 4 segundos de visualización
-          await new Promise(r => setTimeout(r, 4000));
+          // 2. Etiqueta aparece con barrido cuando la línea terminó
+          await new Promise(r => setTimeout(r, 1600));
+          if (isMounted.current) setLabelAnim('enter');
+
+          // 3. PAUSA de visualización
+          await new Promise(r => setTimeout(r, 5000));
 
           if (isMounted.current) {
-            // 3. SALIDA: El barrido de la línea arranca primero
-            setLineClip(0);
+            // 4. SALIDA: barrido inverso de la etiqueta
+            setLabelAnim('exit');
+            await new Promise(r => setTimeout(r, 600));
+
+            // 5. El barrido de la línea arranca
+            if (isMounted.current) setLineClip(0);
 
             // 4. FUNDIDO DE ESCALAS: Arranca justo antes de que termine el barrido (800ms)
             await new Promise(r => setTimeout(r, 800));
@@ -89,12 +107,12 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
     },
     xaxis: {
       type: 'datetime',
-      labels: { show: true, style: { colors: '#555', fontSize: '9px' }, datetimeUTC: false },
+      labels: { show: true, style: { colors: '#ffffff', fontSize: '9px' }, datetimeUTC: false },
       axisBorder: { show: false },
       axisTicks: { show: false }
     },
     yaxis: {
-      labels: { show: true, style: { colors: '#555', fontSize: '9px' }, formatter: v => v.toFixed(2) },
+      labels: { show: true, style: { colors: '#ffffff', fontSize: '9px' }, formatter: v => v.toFixed(2) },
       opposite: true,
       axisBorder: { show: false },
       axisTicks: { show: false }
@@ -122,8 +140,74 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
           transition: clip-path 1500ms ease-in-out !important;
           clip-path: inset(0 ${100 - lineClip}% 0 0);
         }
+        /* Ocultar la última etiqueta del eje X */
+        .apexcharts-xaxis-texts-g text:last-of-type {
+          display: none !important;
+        }
       `}</style>
       <Chart options={options} series={series} type="area" height="100%" width="100%" />
+
+      {/* CSS para animación de etiqueta */}
+      <style>{`
+        @keyframes labelSweepIn {
+          0% {
+            clip-path: inset(0 100% 0 0);
+            filter: brightness(3);
+            box-shadow: 0 0 12px rgba(255,255,255,0.5);
+          }
+          25% {
+            clip-path: inset(0 70% 0 0);
+            filter: brightness(2.2);
+          }
+          50% {
+            clip-path: inset(0 35% 0 0);
+            filter: brightness(1.5);
+            box-shadow: 0 0 6px rgba(255,255,255,0.2);
+          }
+          75% {
+            clip-path: inset(0 10% 0 0);
+            filter: brightness(1.2);
+          }
+          100% {
+            clip-path: inset(0 0 0 0);
+            filter: brightness(1);
+            box-shadow: none;
+          }
+        }
+        @keyframes labelSweepOut {
+          0% { opacity: 1; filter: brightness(1); }
+          40% { opacity: 1; filter: brightness(2); }
+          100% { opacity: 0; filter: brightness(3); }
+        }
+        .label-enter { animation: labelSweepIn 600ms steps(12, end) forwards; }
+        .label-exit { animation: labelSweepOut 350ms ease-out forwards; }
+      `}</style>
+
+      {/* Etiqueta de precio — barrido */}
+      {priceInfo && labelAnim && (
+        <div
+          className={`absolute z-20 font-mono px-2 py-1 rounded label-${labelAnim}`}
+          style={{
+            top: '8px',
+            right: '8px',
+            backgroundColor: '#000',
+            border: '1px solid rgba(255,255,255,0.35)',
+          }}
+        >
+          <span
+            className="text-white text-[14px] font-bold"
+            style={{ fontVariantNumeric: 'tabular-nums' }}
+          >
+            ${priceInfo.price.toFixed(2)}
+          </span>
+          <span
+            className={`text-[14px] font-bold ml-2 ${priceInfo.change >= 0 ? 'text-green-400/70' : 'text-red-400/70'}`}
+            style={{ fontVariantNumeric: 'tabular-nums' }}
+          >
+            {priceInfo.change >= 0 ? '+' : ''}{priceInfo.change.toFixed(2)}%
+          </span>
+        </div>
+      )}
     </div>
   );
 };
@@ -269,11 +353,34 @@ export default function App() {
   const [isAiActive, setIsAiActive] = useState(false);
   const [audioData, setAudioData] = useState(new Uint8Array(0));
   const [isVoicePlaying, setIsVoicePlaying] = useState(false);
+  const [newsIdx, setNewsIdx] = useState(0);
 
   useEffect(() => {
     const pulse = setInterval(() => setMasterTime(new Date()), 1000);
     return () => clearInterval(pulse);
   }, []);
+
+  const newsIntervalRef = useRef(null);
+  const newsCounterRef = useRef(0);
+
+  // Rotación de noticias robusta: el intervalo vive independientemente del array
+  useEffect(() => {
+    // Si ya hay un intervalo corriendo, no creamos otro
+    if (newsIntervalRef.current) return;
+    // Solo arrancamos si hay noticias
+    if (news.length === 0) return;
+
+    newsIntervalRef.current = setInterval(() => {
+      newsCounterRef.current += 1;
+      // Siempre derivamos el índice al momento del tick para reflejar updates del array
+      setNewsIdx(newsCounterRef.current % news.length);
+    }, 6000);
+
+    return () => {
+      clearInterval(newsIntervalRef.current);
+      newsIntervalRef.current = null;
+    };
+  }, [news]);
 
   useEffect(() => {
     const staggerTimers = [];
@@ -324,7 +431,14 @@ export default function App() {
 
         // Noticias (sin stagger)
         const n = await fetch(`${API_BASE}/api/market-news`).then(r => r.json());
-        if (Array.isArray(n)) setNews(n);
+        if (Array.isArray(n)) {
+          // Filtramos las fuentes que no queremos mostrar de momento
+          const filteredNews = n.filter(item =>
+            item.source !== 'StockStory' &&
+            item.source !== 'Associated Press Finance'
+          );
+          setNews(filteredNews);
+        }
       } catch (e) {
         console.error("Error cargando datos:", e);
       }
@@ -341,12 +455,12 @@ export default function App() {
     if (news.length > 0) {
       const canvas = document.createElement("canvas");
       const context = canvas.getContext("2d");
-      context.font = "10px 'JetBrains Mono'";
+      context.font = "14px 'JetBrains Mono'";
 
-      const times = news.slice(0, 7).map(n => {
+      const times = news.slice(0, 5).map(n => {
         const metrics = context.measureText(n.headline.toUpperCase());
         const textWidth = metrics.width;
-        const containerWidth = 307; // El 60% exacto de los 512px del widget
+        const containerWidth = 280; // ~75% de 384px
         const dist = Math.max(0, textWidth - containerWidth);
 
         // (Distancia / Velocidad 18px/s) + 3s de pausa total (1.5s inicio + 1.5s fin)
@@ -461,14 +575,28 @@ export default function App() {
   return (
     <div className="flex flex-col bg-black overflow-hidden h-screen items-center">
 
-      {/* Estela Superior Fina (1px) */}
-      <div
-        className="h-[1px] min-h-[1px] w-full transition-all duration-700 ease-out z-50 relative"
-        style={{ backgroundColor: sentimentColor, boxShadow: neonGlow, filter: 'saturate(1.8)' }}
-      />
+      {/* INTERFAZ DE ANCHO FIJO: 2048px totales */}
+      <div className="w-[2048px] h-[192px] bg-black text-white flex overflow-hidden font-mono select-none relative shrink-0">
 
-      {/* INTERFAZ DE ANCHO FIJO: 1920px totales */}
-      <div className="w-[1920px] h-[192px] bg-black text-white flex overflow-hidden border-b border-gray-900 font-mono select-none relative shrink-0">
+        {/* Luz Ambiental Superior (Gradient Inward) */}
+        <div
+          className="absolute top-0 left-0 w-full h-[30px] z-50 pointer-events-none"
+          style={{
+            background: `linear-gradient(to bottom, ${sentimentColor} 0%, transparent 100%)`,
+            opacity: isAiActive ? 0 : 0.4,
+            transition: 'opacity 0.8s ease-out, background 0.7s ease-out'
+          }}
+        />
+
+        {/* Luz Ambiental Inferior (Gradient Inward) */}
+        <div
+          className="absolute bottom-0 left-0 w-full h-[30px] z-[100] pointer-events-none"
+          style={{
+            background: `linear-gradient(to top, ${sentimentColor} 0%, transparent 100%)`,
+            opacity: isAiActive ? 0 : 0.4,
+            transition: 'opacity 0.8s ease-out, background 0.7s ease-out'
+          }}
+        />
 
         <AIWaveform rawData={audioData} active={isAiActive} />
 
@@ -529,61 +657,122 @@ export default function App() {
           </div>
         </motion.div>
 
-        {/* W3: NEWS FEED (512px) - SE VA PARA ARRIBA */}
+        {/* W3: NEWS — SINGLE ROTATING ITEM CON PAUSA (384px) */}
         <motion.div
           animate={{ y: isAiActive ? -200 : 0 }}
           transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1] }}
-          className="w-[512px] h-[192px] border-r border-gray-800 shrink-0 bg-black flex flex-col font-mono overflow-hidden"
+          className="w-[384px] h-[192px] border-r border-gray-800 shrink-0 bg-black flex flex-col font-mono overflow-hidden relative"
         >
-          <div className="flex h-[24px] items-center text-[9px] font-bold text-zinc-500 border-b border-zinc-800 bg-zinc-900/30 px-2 uppercase tracking-tighter shrink-0">
-            <div className="w-[60%]">Headline</div>
-            <div className="w-[15%] text-center">Time</div>
-            <div className="w-[10%] text-center">Ticker</div>
-            <div className="w-[15%] text-right">Source</div>
-          </div>
-          <div className="flex flex-col h-[168px] bg-black overflow-hidden">
-            {news.slice(0, 7).map((n, i) => (
-              <div key={i} className="flex items-center px-2 h-[24px] border-b border-zinc-900/40 hover:bg-zinc-900/50 transition-colors group shrink-0">
-                <div className="w-[60%] text-[10px] text-zinc-300 font-medium group-hover:text-white overflow-hidden pr-2">
-                  <MarqueeHeadline key={`${cycleKey}-${i}`} text={n.headline} maxDuration={maxDuration} id={i} />
-                </div>
-                <div className="w-[15%] text-[10px] text-violet-500 text-center font-bold">{n.time}</div>
-                <div className="w-[10%] text-[9px] text-zinc-500 text-center uppercase">{n.ticker}</div>
-                <div className="w-[15%] text-[9px] text-zinc-600 text-right truncate">{n.source}</div>
-              </div>
-            ))}
+          {/* Textura de fondo sutil */}
+          <div
+            className="absolute inset-0 pointer-events-none opacity-[0.15]"
+            style={{
+              backgroundImage: 'radial-gradient(circle, #fff 1px, transparent 1px)',
+              backgroundSize: '10px 10px',
+            }}
+          />
+          {/* Contenido principal (Noticias rotativas) */}
+          <div className="flex-1 w-full overflow-hidden relative" style={{ maskImage: 'linear-gradient(to bottom, transparent, black 10%, black 90%, transparent)' }}>
+            <motion.div
+              className="flex flex-col gap-4 absolute w-full top-0 left-0 pt-[41px] pb-[41px]"
+              animate={{ y: -(newsIdx * 126) }} // 110px (item) + 16px (gap) = 126px
+
+              transition={{
+                type: "spring",
+                stiffness: 90,
+                damping: 20,
+                mass: 1
+              }}
+            >
+              {news.length > 0 &&
+                /* Duplicamos el array varias veces para dar el efecto infinito al desplazar con el índice */
+                [...news, ...news, ...news, ...news, ...news].map((item, idx) => (
+                  <div
+                    key={`${item.id}-${idx}`}
+                    className="mx-4 p-[2px] rounded-xl relative overflow-hidden group shrink-0 h-[110px]"
+                  >
+                    {/* Borde animado / Degradado de fondo del contenedor externo */}
+                    <div className="absolute inset-0 bg-gradient-to-br from-zinc-800/40 via-zinc-900/10 to-transparent rounded-xl" />
+
+                    {/* Tarjeta Interna (Glassmorphism oscuro) */}
+                    <div className="absolute inset-[1px] bg-zinc-950/80 backdrop-blur-md rounded-[10px] overflow-hidden flex flex-col justify-center p-3">
+
+                      {/* Resplandor superior sutil */}
+                      <div className="absolute top-0 left-0 right-0 height-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+
+                      {/* Acento lateral vibrante */}
+                      <div
+                        className="absolute left-0 top-0 bottom-0 w-[3px]"
+                        style={{
+                          background: idx % 2 === 0
+                            ? 'linear-gradient(to bottom, #f97316, #fb923c)' // Naranja
+                            : 'linear-gradient(to bottom, #3f3f46, #52525b)',  // Gris Oscuro/Negro
+                          boxShadow: idx % 2 === 0
+                            ? '2px 0 8px rgba(249,115,22,0.4)'
+                            : '2px 0 8px rgba(63,63,70,0.4)'
+                        }}
+                      />
+
+                      {/* Brillo dinámico de fondo (radial gradient asimétrico) */}
+                      <div
+                        className="absolute -inset-10 opacity-30 pointer-events-none mix-blend-screen"
+                        style={{
+                          background: `radial-gradient(circle at 10% 50%, ${idx % 2 === 0 ? '#f9731640' : '#3f3f4640'}, transparent 50%)`
+                        }}
+                      />
+
+                      {/* Header de la tarjeta */}
+                      <div className="flex items-center gap-2 mb-1.5 relative z-10">
+                        {/* Source Tag estilo Badge Premium */}
+                        <div className="bg-white/5 border border-white/10 px-1.5 py-[1px] rounded text-[8px] uppercase font-bold tracking-[0.15rem] flex items-center gap-1.5 shadow-[0_2px_10px_rgba(0,0,0,0.5)]">
+                          <span
+                            className="w-[3px] h-[3px] rounded-full animate-pulse"
+                            style={{ background: idx % 2 === 0 ? '#fb923c' : '#a1a1aa' }}
+                          />
+                          <span className="text-zinc-300 drop-shadow-md">{item.source || 'MARKET'}</span>
+                        </div>
+
+                        <span className="text-zinc-500 text-[9px] font-mono tracking-wider ml-auto">
+                          {item.time}
+                        </span>
+                      </div>
+
+                      {/* Titular */}
+                      <p className="text-gray-100 text-[16px] font-semibold leading-[1.25] pl-1 line-clamp-3 relative z-10 drop-shadow-lg" style={{ textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}>
+                        {item.headline}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+            </motion.div>
           </div>
         </motion.div>
 
-        {/* W4: WORLD CLOCKS (384px) - SE VA PARA ABAJO */}
+        {/* W4: WORLD CLOCKS (640px) - 5 EN FILA HORIZONTAL */}
         <motion.div
           animate={{ y: isAiActive ? 200 : 0 }}
           transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1] }}
-          className="w-[384px] h-full grid grid-cols-3 bg-zinc-950/20 shrink-0 border-l border-gray-900"
+          className="w-[640px] h-full flex items-center justify-around bg-zinc-950/20 shrink-0 border-l border-gray-900 relative"
         >
-          <div className="flex flex-col justify-around border-r border-zinc-900/50 py-1">
-            <Clock city="BS AS" zone="America/Argentina/Buenos_Aires" time={masterTime} />
-            <Clock city="SYDNEY" zone="Australia/Sydney" time={masterTime} />
-          </div>
-          <div className="flex flex-col justify-around border-r border-zinc-900/50 py-1">
-            <Clock city="NY" zone="America/New_York" time={masterTime} />
-            <Clock city="TOKIO" zone="Asia/Tokyo" time={masterTime} />
-          </div>
-          <div className="flex flex-col justify-around py-1">
-            <Clock city="LONDON" zone="Europe/London" time={masterTime} />
-            <Clock city="BEIJING" zone="Asia/Shanghai" time={masterTime} />
-          </div>
+          {/* Mapa del mundo de fondo (SVG realista) */}
+          <div
+            className="absolute inset-0 pointer-events-none opacity-[0.08]"
+            style={{
+              backgroundImage: 'url(/world_map.svg)',
+              backgroundSize: '100% auto',
+              backgroundPosition: 'center 20%',
+              backgroundRepeat: 'no-repeat',
+            }}
+          />
+          <Clock city="BS AS" zone="America/Argentina/Buenos_Aires" time={masterTime} />
+          <Clock city="NY" zone="America/New_York" time={masterTime} />
+          <Clock city="LONDON" zone="Europe/London" time={masterTime} />
+          <Clock city="TOKIO" zone="Asia/Tokyo" time={masterTime} />
+          <Clock city="BEIJING" zone="Asia/Shanghai" time={masterTime} />
         </motion.div>
 
-      </div>
-
-      {/* Estela Inferior Fina (1px) */}
-      <div
-        className="h-[1px] min-h-[1px] w-full transition-all duration-700 ease-out z-50 relative"
-        style={{ backgroundColor: sentimentColor, boxShadow: neonGlow, filter: 'saturate(1.8)' }}
-      />
-
-    </div>
+      </div >
+    </div >
   );
 }
 
@@ -603,7 +792,6 @@ const Clock = ({ city, zone, time }) => {
     'NY': { sessions: [[9 * 60 + 30, 16 * 60]] },                        // NYSE 09:30–16:00
     'LONDON': { sessions: [[8 * 60, 16 * 60 + 30]] },                        // LSE  08:00–16:30
     'TOKIO': { sessions: [[9 * 60, 11 * 60 + 30], [12 * 60 + 30, 15 * 60 + 30]] },  // TSE  09:00–11:30, 12:30–15:30
-    'SYDNEY': { sessions: [[10 * 60, 16 * 60]] },                          // ASX  10:00–16:00
     'BEIJING': { sessions: [[9 * 60 + 30, 11 * 60 + 30], [13 * 60, 15 * 60]] },     // SSE  09:30–11:30, 13:00–15:00
   };
 
@@ -614,20 +802,20 @@ const Clock = ({ city, zone, time }) => {
   const isActive = isWeekday && schedule &&
     schedule.sessions.some(([open, close]) => minuteOfDay >= open && minuteOfDay < close);
 
-  const s = 52;
+  const s = 110;
   const c = s / 2;
-  const R = 21;
+  const R = 44;
   const uid = city.replace(/\s/g, '');
 
   // 12 marcas horarias
   const hourTicks = Array.from({ length: 12 }, (_, i) => {
     const a = (i * 30 - 90) * Math.PI / 180;
     const isCardinal = i % 3 === 0;
-    const len = isCardinal ? 4.5 : 2.5;
+    const len = isCardinal ? 9 : 5.5;
     return {
       x1: c + (R - len) * Math.cos(a), y1: c + (R - len) * Math.sin(a),
       x2: c + (R - 0.5) * Math.cos(a), y2: c + (R - 0.5) * Math.sin(a),
-      w: isCardinal ? 1.3 : 0.5,
+      w: isCardinal ? 2.5 : 1,
       color: isCardinal ? '#999' : '#444'
     };
   });
@@ -636,23 +824,23 @@ const Clock = ({ city, zone, time }) => {
   const minDots = Array.from({ length: 60 }, (_, i) => {
     if (i % 5 === 0) return null;
     const a = (i * 6 - 90) * Math.PI / 180;
-    return { cx: c + (R - 1) * Math.cos(a), cy: c + (R - 1) * Math.sin(a) };
+    return { cx: c + (R - 2.5) * Math.cos(a), cy: c + (R - 2.5) * Math.sin(a) };
   }).filter(Boolean);
 
   const accent = '#fb923c';
 
   return (
-    <div className="flex flex-col items-center justify-center gap-[2px]">
+    <div className="flex flex-col items-center justify-center gap-[2px] relative z-10">
       {/* Ciudad + indicador de mercado */}
       <div className="flex items-center gap-1.5">
         <div
-          className="w-[5px] h-[5px] rounded-full"
+          className="w-[8px] h-[8px] rounded-full"
           style={{
             backgroundColor: isActive ? '#4ade80' : '#3f3f46',
             boxShadow: isActive ? '0 0 6px #4ade80, 0 0 2px #22c55e' : 'none'
           }}
         />
-        <span className="text-[7px] text-zinc-500 font-bold uppercase tracking-[0.2em]">{city}</span>
+        <span className="text-[12px] text-zinc-500 font-bold uppercase tracking-[0.15em]">{city}</span>
       </div>
 
       {/* Dial analógico */}
@@ -669,19 +857,19 @@ const Clock = ({ city, zone, time }) => {
         </defs>
 
         {/* Fondo del dial con profundidad */}
-        <circle cx={c} cy={c} r={R + 1} fill={`url(#bg-${uid})`} />
+        <circle cx={c} cy={c} r={R + 2.5} fill={`url(#bg-${uid})`} />
 
         {/* Anillo exterior con brillo de mercado */}
-        <circle cx={c} cy={c} r={R + 1} fill="none"
-          stroke={isActive ? '#22c55e' : '#333'} strokeWidth="0.4"
+        <circle cx={c} cy={c} r={R + 2.5} fill="none"
+          stroke={isActive ? '#22c55e' : '#333'} strokeWidth="0.7"
           opacity={isActive ? 0.5 : 0.8}
           style={isActive ? { filter: `drop-shadow(0 0 3px #22c55e)` } : {}}
         />
-        <circle cx={c} cy={c} r={R} fill="none" stroke="#555" strokeWidth="0.3" />
+        <circle cx={c} cy={c} r={R} fill="none" stroke="#555" strokeWidth="0.6" />
 
         {/* Puntos de minutos */}
         {minDots.map((d, i) => (
-          <circle key={i} cx={d.cx} cy={d.cy} r="0.35" fill="#2a2a2a" />
+          <circle key={i} cx={d.cx} cy={d.cy} r="0.7" fill="#2a2a2a" />
         ))}
 
         {/* Marcas horarias */}
@@ -691,32 +879,32 @@ const Clock = ({ city, zone, time }) => {
         ))}
 
         {/* Aguja de horas */}
-        <line x1={c} y1={c + 2} x2={c} y2={c - 9}
-          stroke={accent} strokeWidth="2.5" strokeLinecap="round"
+        <line x1={c} y1={c + 5} x2={c} y2={c - 18}
+          stroke={accent} strokeWidth="4" strokeLinecap="round"
           transform={`rotate(${hourDeg} ${c} ${c})`}
         />
 
         {/* Aguja de minutos */}
-        <line x1={c} y1={c + 2.5} x2={c} y2={c - 14}
-          stroke={accent} strokeWidth="1.5" strokeLinecap="round"
+        <line x1={c} y1={c + 5.5} x2={c} y2={c - 31}
+          stroke={accent} strokeWidth="3" strokeLinecap="round"
           transform={`rotate(${minDeg} ${c} ${c})`}
         />
 
         {/* Segundero */}
         <g transform={`rotate(${secDeg} ${c} ${c})`}>
-          <line x1={c} y1={c + 4} x2={c} y2={c - 17}
-            stroke="white" strokeWidth="0.5" strokeLinecap="round" opacity="0.5" />
-          <circle cx={c} cy={c + 3.5} r="0.9" fill="white" opacity="0.3" />
+          <line x1={c} y1={c + 8.5} x2={c} y2={c - 37}
+            stroke="white" strokeWidth="1" strokeLinecap="round" opacity="0.5" />
+          <circle cx={c} cy={c + 8} r="1.8" fill="white" opacity="0.3" />
         </g>
 
         {/* Centro */}
-        <circle cx={c} cy={c} r="2.2" fill={accent} />
-        <circle cx={c} cy={c} r="1.1" fill="#111" />
-        <circle cx={c} cy={c} r="0.5" fill={accent} opacity="0.9" />
+        <circle cx={c} cy={c} r="4.5" fill={accent} />
+        <circle cx={c} cy={c} r="2.3" fill="#111" />
+        <circle cx={c} cy={c} r="1" fill={accent} opacity="0.9" />
       </svg>
 
       {/* Hora digital */}
-      <span className="text-[11px] font-mono text-orange-400 font-semibold leading-none"
+      <span className="text-[16px] font-mono text-orange-400 font-semibold leading-none"
         style={{ fontVariantNumeric: 'tabular-nums' }}>
         {timeInZone.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
       </span>
