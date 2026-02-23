@@ -8,3 +8,4 @@ edge-tts
 httpx
 python-multipart
 python-dotenv
+pyRofex

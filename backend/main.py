@@ -15,6 +15,98 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 from google import genai
+import pyRofex
+import ssl
+
+# Bypass para el error de certificados SSL en entornos locales de Windows
+ssl._create_default_https_context = ssl._create_unverified_context
+
+# --- INICIALIZACIÓN DE ROFEX ---
+try:
+    pyRofex.initialize(
+        user=os.environ.get("PYROFEX_USER"),
+        password=os.environ.get("PYROFEX_PASSWORD"),
+        account=os.environ.get("PYROFEX_ACCOUNT"),
+        environment=pyRofex.Environment.REMARKET
+    )
+    print("✅ PyRofex Inicializado correctamente en REMARKET")
+except Exception as e:
+    print(f"❌ Error al inicializar PyRofex: {e}")
+
+# Estado global para guardar el último precio de ROFEX
+# Se inicializa de forma dinámica al pedir precios
+ROFEX_STATE = {}
+
+def get_rofex_initial_price(symbol: str):
+    """Obtiene el último precio operado o de ajuste (cierre) desde la API REST de Rofex"""
+    # Excluímos cauciones que no estén en formato de ticker válido
+    if "PESOS" in symbol or "DOLARES" in symbol:
+        return 0.0
+        
+    try:
+        entries = [
+            pyRofex.MarketDataEntry.LAST, 
+            pyRofex.MarketDataEntry.SETTLEMENT_PRICE,
+            pyRofex.MarketDataEntry.CLOSING_PRICE
+        ]
+        resp = pyRofex.get_market_data(ticker=symbol, entries=entries)
+        if resp and resp.get("status") == "OK" and "marketData" in resp:
+            md = resp["marketData"]
+            
+            # Prioridad 1: Último precio operado
+            if md.get("LA") and md["LA"].get("price"):
+                return md["LA"]["price"]
+            
+            # Prioridad 2: Precio de Ajuste (Settlement) - Muy común al Cierre/Fin de Semana
+            if md.get("SE") and md["SE"].get("price"):
+                return md["SE"]["price"]
+                
+            # Prioridad 3: Precio de Cierre
+            if md.get("CL") and md["CL"].get("price"):
+                return md["CL"]["price"]
+                
+    except Exception as e:
+        print(f"⚠️ Error obteniendo precio base REST para {symbol}: {e}")
+        
+    return None
+
+def market_data_handler(message):
+    """Callback que pyRofex llama cada vez que llega un nuevo precio/punta por WS"""
+    try:
+        if message["type"] == "Md":
+            data = message["marketData"]
+            symbol = message["instrumentId"]["symbol"]
+            
+            # Buscamos el Last (precio operado) o Bids/Offers si es caución
+            last_price = None
+            if "LA" in data and data["LA"]:
+                last_price = data["LA"]["price"]
+            elif "BI" in data and data["BI"]:
+                # Puntas compradora para cauciones
+                last_price = data["BI"][0]["price"]
+            
+            if last_price is not None:
+                ROFEX_STATE[symbol] = last_price
+                print(f"📊 [Rofex WS] {symbol}: {last_price}")
+                
+                # Emitir al frontend usando el loop de asyncio de FastAPI
+                if hasattr(app, "state") and hasattr(app.state, "loop"):
+                    asyncio.run_coroutine_threadsafe(
+                        manager.broadcast_command("ROFEX_UPDATE", {
+                            "symbol": symbol,
+                            "price": last_price
+                        }),
+                        app.state.loop
+                    )
+    except Exception as e:
+        print(f"⚠️ Error en market_data_handler: {e}")
+
+def error_handler(message):
+    print(f"❌ Error pyRofex WS: {message}")
+
+def exception_handler(e):
+    print(f"❌ Excepción pyRofex WS: {e}")
+from google import genai
 from google.genai import types
 import edge_tts
 from fastapi.staticfiles import StaticFiles
@@ -67,12 +159,44 @@ app.add_middleware(
 # Memoria global para el Widget 3
 NEWS_STACK = []
 
-# Lista de activos para el Ticker (Widget 2)
+# Lista de activos para el Ticker (Widget 2) - yfinance backup
 TICKERS_TICKER = [
         "GLD", "SLV", "COPX", "USO", "URA",
         "EEM", "XLV", "XLB", "EWZ", "EWJ",
         "^GSPC", "^DJI", "^IXIC", "^RUT", "^MERV"
         ]
+
+# Lista de activos argentinos a escuchar vía PyRofex
+ROFEX_INSTRUMENTS = [
+    # Futuros Dolar
+    "DLR/FEB26", "DLR/MAR26", "DLR/ABR26", "DLR/MAY26", "DLR/JUN26",
+    "DLR/JUL26", "DLR/AGO26", "DLR/SEP26",
+    # Cauciones
+    "PESOS - 1D", "PESOS - 3D", "PESOS - 7D", "PESOS - 30D",
+    "DOLARES - 1D", "DOLARES - 3D", "DOLARES - 7D", "DOLARES - 30D",
+    # Acciones Spot (BYMA CEDEARS/LIDERES vía RFX en Remarket)
+    "BMA - 48hs", "BYMA - 48hs", "CEPU - 48hs", "GGAL - 48hs", 
+    "PAMP - 48hs", "YPFD - 48hs", "TECO2 - 48hs", "LOMA - 48hs"
+]
+
+@app.on_event("startup")
+async def startup_event():
+    # Guardamos el loop para que pyRofex pueda encolar corrutinas (broadcast)
+    app.state.loop = asyncio.get_running_loop()
+    
+    # Iniciar WebSocket de PyRofex
+    try:
+        pyRofex.init_websocket_connection(
+            market_data_handler=market_data_handler,
+            error_handler=error_handler,
+            exception_handler=exception_handler
+        )
+        # Nos suscribimos a Last (LA), Bids (BI) y Offers (OF)
+        entries = [pyRofex.MarketDataEntry.BIDS, pyRofex.MarketDataEntry.OFFERS, pyRofex.MarketDataEntry.LAST]
+        pyRofex.market_data_subscription(tickers=ROFEX_INSTRUMENTS, entries=entries)
+        print("✅ Suscrito a WS MarketData de Rofex:", ROFEX_INSTRUMENTS)
+    except Exception as e:
+        print(f"❌ Fallo al conectar WS Rofex: {e}")
 
 # Poné tus credenciales de Twilio acá arriba
 TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID")
@@ -266,7 +390,8 @@ def get_chart_data(ticker: str):
         chart_data = [
             {
                 "time": int(row[time_col].timestamp() * 1000), 
-                "value": float(row['Close'])
+                "value": float(row['Close']),
+                "volume": float(row['Volume'])
             } 
             for _, row in data.iterrows()
         ]
@@ -287,11 +412,22 @@ async def get_prices():
         "^GSPC", "^DJI", "^IXIC", "^RUT", "^MERV"
     ]
     
-    # Disparamos todas las consultas en paralelo
+    # Rellenar ROFEX_STATE base de forma asíncrona si no están
+    for symbol in ROFEX_INSTRUMENTS:
+        if symbol not in ROFEX_STATE:
+            # Para no bloquear el loop, lanzamos threads cortos por cada símbolo vacío
+            price = await asyncio.to_thread(get_rofex_initial_price, symbol)
+            ROFEX_STATE[symbol] = price
+            
+    # Disparamos todas las consultas en paralelo para el Ticker global
     tasks = [asyncio.to_thread(fetch_ticker_data, t) for t in tickers]
-    results = await asyncio.gather(*tasks)
+    global_results = await asyncio.gather(*tasks)
     
-    return results
+    # Devolvemos el estado actual local y global juntos
+    return {
+        "global": global_results,
+        "rofex": ROFEX_STATE
+    }
 
 @app.get("/api/market-news")
 def get_latest_scraping():
@@ -357,8 +493,11 @@ def get_latest_scraping():
                 print(f"Error procesando artículo: {e}")
                 continue
 
-        # 2. Actualizamos el STACK global
-        # Mantenemos el orden de lo último detectado arriba
+        # 2. Ordenamos cronológicamente (de más antiguo a más reciente) para la rotación del frontend
+        # Asumiendo formato "HH:MM:SS"
+        new_entries.sort(key=lambda x: datetime.strptime(x["time"], "%H:%M:%S"), reverse=True)
+
+        # 3. Actualizamos el STACK global
         NEWS_STACK = new_entries
         
         return NEWS_STACK
