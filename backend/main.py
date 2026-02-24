@@ -12,9 +12,9 @@ import json
 from fastapi import Form
 import httpx
 import os
+import math
 from dotenv import load_dotenv
 load_dotenv()
-from google import genai
 import pyRofex
 import ssl
 
@@ -106,10 +106,6 @@ def error_handler(message):
 
 def exception_handler(e):
     print(f"❌ Excepción pyRofex WS: {e}")
-from google import genai
-from google.genai import types
-import edge_tts
-from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
 
@@ -203,63 +199,6 @@ TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN")
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000")
 
-async def download_audio(url: str, filename: str):
-    """Descarga el audio de Twilio siguiendo las redirecciones necesarias."""
-    # Agregamos follow_redirects=True para que pase del 307 al archivo final
-    async with httpx.AsyncClient(follow_redirects=True) as http_client: 
-        resp = await http_client.get(url, auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN))
-        
-        if resp.status_code == 200:
-            with open(filename, "wb") as f:
-                f.write(resp.content)
-            return True
-        else:
-            print(f"❌ Error de Twilio: {resp.status_code} - {resp.text}")
-            return False
-
-def get_asset_data(ticker: str):
-    """Consulta métricas técnicas y precio de un activo financiero."""
-    print(f"🔍 [TOOL CALL] Consultando yfinance para: {ticker}") # Agregá esto
-    try:
-        # Forzamos a que si pide BTC, use BTC-USD que es lo que entiende yfinance
-        if ticker.upper() == "BTC": ticker = "BTC-USD"
-        
-        asset = yf.Ticker(ticker)
-        data = asset.info
-        return {
-            "symbol": ticker,
-            "price": data.get("currentPrice", data.get("regularMarketPrice", "N/A")),
-            "beta": data.get("beta", "N/A"),
-            "change": f"{data.get('regularMarketChangePercent', 0):.2f}%"
-        }
-    except Exception as e:
-        print(f"❌ Error en la herramienta: {e}")
-        return {"error": "No se encontraron datos."}
-
-def get_market_summary():
-    """Devuelve los titulares de noticias más recientes del mercado."""
-    # Usamos el stack que ya tenés funcionando en el Widget 3.
-    return {"headlines": [news['headline'] for news in NEWS_STACK[:5]]}
-
-client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
-AI_MODEL = "gemini-2.5-flash"
-tools_config = [
-    get_asset_data,     # Obtiene precios y betas (yfinance)
-    get_market_summary  # Obtiene noticias (nuestro cache enriquecido)
-]
-
-if not os.path.exists("static"):
-    os.makedirs("static")
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-async def generate_speech(text, filename="static/response.mp3"):
-    """Convierte texto a audio con voz de analista senior."""
-    # 'es-AR-ElenaNeural' da un tono profesional rioplatense perfecto para la UADE
-    output_path = "static/response.mp3"
-    communicate = edge_tts.Communicate(text, "es-AR-ElenaNeural")
-    await communicate.save(filename)
-    return filename
-
 def fetch_ticker_data(t):
     try:
         asset = yf.Ticker(t)
@@ -299,71 +238,132 @@ def parse_relative_time(relative_str):
     except:
         return now.strftime("%H:%M:%S")
 
+async def fetch_company_data(company_name: str):
+    """Busca una empresa por nombre y obtiene sus datos financieros con yfinance."""
+    
+    # 1. Resolver el ticker via Yahoo Finance search API
+    search_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={company_name}&quotesCount=5&newsCount=0"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    
+    ticker_symbol = None
+    company_full_name = company_name
+    
+    async with httpx.AsyncClient(verify=False) as http_client:
+        try:
+            resp = await http_client.get(search_url, headers=headers)
+            if resp.status_code == 200:
+                result = resp.json()
+                for quote in result.get("quotes", []):
+                    if quote.get("quoteType") in ("EQUITY", "ETF"):
+                        ticker_symbol = quote.get("symbol")
+                        company_full_name = quote.get("longname") or quote.get("shortname") or company_name
+                        break
+        except Exception as e:
+            print(f"⚠️ Error buscando ticker: {e}")
+    
+    if not ticker_symbol:
+        print(f"❌ No se encontró ticker para: {company_name}")
+        return None
+    
+    print(f"✅ Ticker encontrado: {ticker_symbol} ({company_full_name})")
+    
+    # 2. Obtener datos con yfinance
+    try:
+        ticker_obj = yf.Ticker(ticker_symbol)
+        info = ticker_obj.info
+        
+        def safe(val):
+            try:
+                if val is None: return None
+                if isinstance(val, float) and math.isnan(val): return None
+                return val
+            except:
+                return None
+        
+        indicators = {
+            "price":             safe(info.get("currentPrice") or info.get("regularMarketPrice")),
+            "change_pct":        safe(info.get("regularMarketChangePercent")),
+            "marketCap":         safe(info.get("marketCap")),
+            "trailingPE":        safe(info.get("trailingPE")),
+            "forwardPE":         safe(info.get("forwardPE")),
+            "trailingEps":       safe(info.get("trailingEps")),
+            "beta":              safe(info.get("beta")),
+            "fiftyTwoWeekHigh":  safe(info.get("fiftyTwoWeekHigh")),
+            "fiftyTwoWeekLow":   safe(info.get("fiftyTwoWeekLow")),
+            "grossMargins":      safe(info.get("grossMargins")),
+            "operatingMargins":  safe(info.get("operatingMargins")),
+            "profitMargins":     safe(info.get("profitMargins")),
+            "debtToEquity":      safe(info.get("debtToEquity")),
+            "returnOnEquity":    safe(info.get("returnOnEquity")),
+            "returnOnAssets":    safe(info.get("returnOnAssets")),
+            "sector":            info.get("sector"),
+            "exchange":          info.get("exchange"),
+        }
+        
+        # 3. Income statement trimestral (ultimos 4 trimestres)
+        income = []
+        try:
+            stmt = await asyncio.to_thread(lambda: ticker_obj.quarterly_income_stmt)
+            if stmt is not None and not stmt.empty:
+                row_map = {
+                    "Total Revenue":    "revenue",
+                    "Gross Profit":     "grossProfit",
+                    "Operating Income": "operatingIncome",
+                    "Pretax Income":    "pretaxIncome",
+                    "Net Income":       "netIncome",
+                }
+                for col in stmt.columns[:4]:
+                    period_label = col.strftime("%b %Y") if hasattr(col, "strftime") else str(col)
+                    period_data = {"period": period_label}
+                    for src_key, dst_key in row_map.items():
+                        if src_key in stmt.index:
+                            try:
+                                val = float(stmt.loc[src_key, col])
+                                period_data[dst_key] = None if math.isnan(val) else val
+                            except:
+                                period_data[dst_key] = None
+                        else:
+                            period_data[dst_key] = None
+                    income.append(period_data)
+        except Exception as e:
+            print(f"⚠️ Error obteniendo income statement: {e}")
+        
+        return {
+            "ticker": ticker_symbol,
+            "name":   company_full_name,
+            "indicators": indicators,
+            "income": income,
+        }
+    
+    except Exception as e:
+        print(f"❌ Error yfinance para {ticker_symbol}: {e}")
+        return None
+
 @app.post("/whatsapp")
-async def receive_whatsapp(MediaUrl0: str = Form(None), From: str = Form(None)):
+async def receive_whatsapp(Body: str = Form(None), From: str = Form(None)):
     print(f"\n--- 📥 NUEVO MENSAJE DE {From} ---")
     
-    if MediaUrl0:
-        audio_filename = f"input_{From}.ogg"
-        print(f"🔗 URL del audio: {MediaUrl0}")
+    if Body and Body.strip():
+        company_name = Body.strip()
+        print(f"🔍 Buscando empresa: '{company_name}'")
         
-        # 1. Notificar al Dashboard
+        # 1. Notificar al Dashboard para activar animacion
         await manager.broadcast_command("START_AI_MODE")
         print("📡 Dashboard notificado: START_AI_MODE")
         
-        # 2. Descarga
-        print("⏳ Descargando audio...")
-        if await download_audio(MediaUrl0, audio_filename):
-            print(f"✅ Audio descargado: {audio_filename}")
-            
-            try:
-                # 3. Gemini procesa el audio
-                print(f"🧠 Enviando a {AI_MODEL}...")
-                with open(audio_filename, "rb") as f:
-                    audio_data = f.read()
-                    
-                    response = client.models.generate_content(
-                        model=AI_MODEL, # Flash para mínima latencia
-                        contents=[
-                            """Actúa como un analista del FinLab UADE. 
-                            REGLA DE ORO: No inventes precios ni datos técnicos. 
-                            Si te preguntan por un activo, USÁ SIEMPRE la herramienta 'get_asset_data'. 
-                            Si la herramienta falla, decí que no tenés el dato en tiempo real.
-                            Si te preguntan por el estado general del mercado, el sentimiento o 'qué está pasando', usá 'get_market_summary'.
-                            REGLA: No te limites a leer los titulares. Analizá la tendencia general (si es alcista, bajista o de cautela) y respondé de forma profesional y breve.""",
-                            types.Part.from_bytes(data=audio_data, mime_type='audio/ogg')
-                        ],
-                        config=types.GenerateContentConfig(
-                            tools=tools_config,
-                            # CAMBIO AQUÍ: Usamos 'disable=False' en lugar de 'enabled=True'
-                            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=False)
-                        )
-                    )
-                
-                # 4. Verificar respuesta
-                final_text = response.text if response.text else "La IA no generó texto (posible tool call interna)."
-                print(f"🤖 IA Responde: {final_text}")
-
-                # A. Generamos el audio de la respuesta
-                print("🎙️ Generando voz...")
-                audio_path = await generate_speech(final_text)
-                await asyncio.sleep(0.5)
-                await manager.broadcast_command("AI_RESPONSE_TEXT", {"text": final_text})
-                audio_url = f"{BASE_URL}/static/response.mp3?t={int(datetime.now().timestamp())}"
-                await manager.broadcast_command("PLAY_AUDIO", {"url": audio_url})
-                
-                await manager.broadcast_command("AI_RESPONSE_TEXT", {"text": final_text})
-                print("📡 Dashboard notificado: AI_RESPONSE_TEXT")
-                
-            except Exception as e:
-                print(f"❌ Error en Gemini: {str(e)}")
-            finally:
-                if os.path.exists(audio_filename):
-                    os.remove(audio_filename)
-                    print("🧹 Archivo temporal borrado.")
+        # 2. Buscar y obtener datos financieros
+        data = await fetch_company_data(company_name)
+        
+        if data:
+            print(f"✅ Datos obtenidos para {data['ticker']}, enviando al dashboard")
+            await manager.broadcast_command("SHOW_COMPANY_DATA", data)
+            print("📡 Dashboard notificado: SHOW_COMPANY_DATA")
         else:
-            print("❌ Falló la descarga del audio. ¿La URL es accesible?")
-            
+            # Si no encontramos la empresa, cancelamos el modo AI
+            await asyncio.sleep(2)
+            await manager.broadcast_command("STOP_AI_MODE")
+            print("📡 Dashboard notificado: STOP_AI_MODE (empresa no encontrada)")
+    
     return {"status": "ok"}
 
 @app.get("/api/chart/{ticker}")
@@ -389,10 +389,9 @@ def get_chart_data(ticker: str):
         # Construimos la lista asegurando milisegundos (* 1000)
         chart_data = [
             {
-                "time": int(row[time_col].timestamp() * 1000), 
-                "value": float(row['Close']),
-                "volume": float(row['Volume'])
-            } 
+                "time": int(row[time_col].timestamp() * 1000),
+                "value": float(row['Close'])
+            }
             for _, row in data.iterrows()
         ]
         
@@ -508,8 +507,11 @@ def get_latest_scraping():
 
 @app.get("/test-ai")
 async def test_ai_trigger():
-    # Simulamos que algo activó la IA
     await manager.broadcast_command("START_AI_MODE")
+    # Datos de prueba con Microsoft
+    test_data = await fetch_company_data("Microsoft")
+    if test_data:
+        await manager.broadcast_command("SHOW_COMPANY_DATA", test_data)
     return {"status": "Comando enviado al LED"}
 
 if __name__ == "__main__":

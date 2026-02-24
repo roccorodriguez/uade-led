@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Chart from 'react-apexcharts';
 import { TrendingUp } from 'lucide-react';
-import { motion, AnimatePresence, useTime, useTransform } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const WS_BASE = import.meta.env.VITE_WS_URL;
@@ -94,8 +94,7 @@ const PremiumNewsFeed = ({ news, activeIdx }) => {
 // --- WIDGET 1: GRÁFICO DINÁMICO UADE (ULTRA-CLEAN WHITE) ---
 const FinancialChart = ({ ticker, onCycleComplete }) => {
   const [series, setSeries] = useState([
-    { name: ticker, type: 'area', data: [] },
-    { name: 'Volumen', type: 'bar', data: [] }
+    { name: ticker, type: 'area', data: [] }
   ]);
   const [scalesOpacity, setScalesOpacity] = useState(0);
   const [lineClip, setLineClip] = useState(0);
@@ -121,8 +120,7 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
 
         if (data && data.length > 0) {
           setSeries([
-            { name: ticker, type: 'area', data: data.map(d => [d.time, d.value]) },
-            { name: 'Volumen', type: 'bar', data: data.map(d => [d.time, d.volume || 0]) }
+            { name: ticker, type: 'area', data: data.map(d => [d.time, d.value]) }
           ]);
 
           // Calcular precio y variación
@@ -176,32 +174,29 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
   }, [ticker]);
 
   // Bloomberg Terminal Style: exact replica
-  const volData = series.length > 1 ? series[1].data : [];
-  const maxVol = volData.length > 0 ? Math.max(...volData.map(d => d[1])) : 1000;
-
   const options = {
     chart: {
-      type: 'area', // área para el gradiente
+      type: 'area',
       background: 'transparent',
       toolbar: { show: false },
       animations: { enabled: false },
       fontFamily: '"Courier New", Courier, monospace',
+      offsetX: -8,
     },
-    stroke: { curve: 'straight', width: [1.5, 0], colors: ['#87CEEB', 'transparent'] },
+    stroke: { curve: 'straight', width: [1.5], colors: ['#87CEEB'] },
     fill: {
-      type: ['gradient', 'solid'],
+      type: ['gradient'],
       gradient: {
         shadeIntensity: 1,
         opacityFrom: 0.9,
         opacityTo: 0.1,
         stops: [0, 100],
         colorStops: [
-          [{ offset: 0, color: '#1e3a8a', opacity: 0.8 }, { offset: 100, color: '#000000', opacity: 0.2 }],
-          []
+          [{ offset: 0, color: '#1e3a8a', opacity: 0.8 }, { offset: 100, color: '#000000', opacity: 0.2 }]
         ]
       },
-      opacity: [1, 0.9], // Area applies grad, Bar applies solid
-      colors: ['#1e3a8a', '#ffffff'] // Series 1 (area), Series 2 (bar, volume)
+      opacity: [1],
+      colors: ['#1e3a8a']
     },
     grid: {
       show: true,
@@ -226,12 +221,6 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
         opposite: true,
         axisBorder: { show: true, color: '#666666' },
         axisTicks: { show: true, color: '#666666' }
-      },
-      {
-        seriesName: 'Volumen',
-        show: false,
-        min: 0,
-        max: maxVol * 2.5 // Empuja las barras de volumen al 40% inferior (haciéndolas más altas)
       }
     ],
     annotations: {
@@ -358,78 +347,105 @@ const MarqueeHeadline = ({ text, maxDuration, id }) => {
   );
 };
 
-const AIWaveform = ({ rawData, active }) => {
-  const width = 2048;
-  const height = 192;
-  const centerY = height / 2;
+const CompanyDataDisplay = ({ data, active }) => {
+  if (!active || !data) return null;
 
-  const time = useTime();
-  const t = useTransform(time, (v) => v / 1000);
-  const [elapsed, setElapsed] = useState(0);
+  const { ticker, name, indicators, income } = data;
+  const {
+    price, change_pct, marketCap, trailingPE, forwardPE, trailingEps,
+    beta, fiftyTwoWeekHigh, fiftyTwoWeekLow,
+    grossMargins, operatingMargins, profitMargins,
+    debtToEquity, returnOnEquity, returnOnAssets,
+    sector, exchange,
+  } = indicators;
 
-  useEffect(() => {
-    return t.onChange(v => setElapsed(v));
-  }, [t]);
+  const fmtB   = (v) => v != null ? `${(v / 1e9).toFixed(2)}B` : 'N/A';
+  const fmtPct = (v) => v != null ? `${(v * 100).toFixed(2)}%` : 'N/A';
+  const fmtNum = (v) => v != null ? v.toFixed(2) : 'N/A';
+  const isPos  = change_pct > 0;
 
-  const generatePath = () => {
-    // Detectamos si hay señal real (Time Domain diferente a 128)
-    const hasSignal = rawData && rawData.length > 0 && !rawData.every(v => v >= 126 && v <= 130);
-    let path = `M 0 ${centerY}`;
+  const kpis = [
+    { label: 'MKT CAP',  value: fmtB(marketCap) },
+    { label: 'P/E TTM',  value: fmtNum(trailingPE) },
+    { label: 'P/E FWD',  value: fmtNum(forwardPE) },
+    { label: 'EPS TTM',  value: fmtNum(trailingEps) },
+    { label: 'BETA',     value: fmtNum(beta) },
+    { label: '52W HIGH', value: fmtNum(fiftyTwoWeekHigh) },
+    { label: '52W LOW',  value: fmtNum(fiftyTwoWeekLow) },
+    { label: 'ROE',      value: fmtPct(returnOnEquity) },
+    { label: 'ROA',      value: fmtPct(returnOnAssets) },
+    { label: 'GROSS M.', value: fmtPct(grossMargins) },
+    { label: 'OPER. M.', value: fmtPct(operatingMargins) },
+    { label: 'D/E',      value: fmtNum(debtToEquity) },
+  ];
 
-    if (hasSignal) {
-      const sliceWidth = width / rawData.length;
-      for (let i = 0; i < rawData.length; i++) {
-        const x = i * sliceWidth;
-        const v = rawData[i] / 128.0;
-        const y = centerY + (v - 1) * 85;
-        path += ` L ${x} ${y}`;
-      }
-    } else {
-      // Si no hay audio o estamos en el fundido de salida, mantenemos el "respiro"
-      // Esto evita que la onda se "parta" o salte a una línea recta bruscamente
-      const points = 120;
-      const step = width / points;
-      for (let i = 0; i <= points; i++) {
-        const x = i * step;
-        const oscillation = Math.sin(i * 0.08 + elapsed * 2.2) * 14;
-        const breathing = Math.cos(elapsed * 1.5) * 10;
-        path += ` L ${x} ${centerY + oscillation + breathing}`;
-      }
-    }
-    return path;
-  };
+  const incomeRows = [
+    { label: 'TOTAL REVENUE', key: 'revenue' },
+    { label: 'GROSS PROFIT',  key: 'grossProfit' },
+    { label: 'OPER. INCOME',  key: 'operatingIncome' },
+    { label: 'PRE-TAX INC.',  key: 'pretaxIncome' },
+    { label: 'NET INCOME',    key: 'netIncome' },
+  ];
 
   return (
-    <div className="absolute inset-0 pointer-events-none z-50 overflow-hidden flex items-center">
-      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
-        <defs>
-          <filter id="glowWave">
-            <feGaussianBlur stdDeviation="4" result="coloredBlur" />
-            <feMerge>
-              <feMergeNode in="coloredBlur" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
-        </defs>
+    <motion.div
+      className="absolute inset-0 z-50 flex items-stretch bg-black font-mono overflow-hidden"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.6, ease: [0.4, 0, 0.2, 1] }}
+    >
+      {/* LEFT: Identidad de la empresa */}
+      <div className="w-[270px] flex flex-col justify-center px-5 border-r border-[#2a2a2a] shrink-0">
+        <div className="text-[30px] font-bold text-white leading-none tracking-widest">{ticker}</div>
+        <div className="text-[10px] text-[#999] mt-1 leading-tight truncate">{name}</div>
+        <div className="text-[9px] text-[#555] mt-[3px] uppercase tracking-wider">{sector} · {exchange}</div>
+        <div className="mt-3 flex items-baseline gap-2">
+          <span className="text-[22px] font-bold text-white leading-none">${fmtNum(price)}</span>
+          <span className={`text-[12px] font-bold ${isPos ? 'text-[#00ff88]' : 'text-[#ff4444]'}`}>
+            {isPos ? '+' : ''}{fmtNum(change_pct)}%
+          </span>
+        </div>
+      </div>
 
-        <motion.path
-          // VOLVEMOS A ASIGNAR 'd' DIRECTAMENTE: Sin lag de interpolación
-          d={generatePath()}
-          fill="none"
-          stroke="white"
-          strokeWidth="3"
-          strokeLinecap="round"
-          filter="url(#glowWave)"
-          // Framer Motion solo maneja la opacidad aquí
-          initial={{ opacity: 0 }}
-          animate={{ opacity: active ? 1 : 0 }}
-          transition={{
-            duration: 0.8,
-            ease: [0.4, 0, 0.2, 1]
-          }}
-        />
-      </svg>
-    </div>
+      {/* MIDDLE: KPIs grid */}
+      <div className="flex-1 flex flex-col justify-center px-5 border-r border-[#2a2a2a]">
+        <div className="grid grid-cols-4 gap-x-5 gap-y-[5px]">
+          {kpis.map(({ label, value }) => (
+            <div key={label} className="flex flex-col">
+              <span className="text-[8px] text-[#555] uppercase tracking-widest leading-none">{label}</span>
+              <span className="text-[11px] font-bold text-[#e8e8e8] leading-tight mt-[2px]">{value}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* RIGHT: Income Statement trimestral */}
+      <div className="w-[720px] flex flex-col justify-center px-5 shrink-0">
+        {/* Header */}
+        <div className="flex items-center text-[8px] uppercase tracking-widest mb-[5px] pb-[4px] border-b border-[#2a2a2a]">
+          <div className="w-[130px] text-[#444]">INCOME STMT</div>
+          {income.map((q, i) => (
+            <div key={i} className="flex-1 text-right text-[#666]">{q.period}</div>
+          ))}
+        </div>
+        {/* Filas */}
+        {incomeRows.map(({ label, key }, rowIdx) => (
+          <div
+            key={key}
+            className="flex items-center text-[10px] py-[3px]"
+            style={{ backgroundColor: rowIdx % 2 === 0 ? '#0a0a0a' : 'transparent' }}
+          >
+            <div className="w-[130px] text-[8px] text-[#777] uppercase tracking-wider shrink-0">{label}</div>
+            {income.map((q, i) => (
+              <div key={i} className="flex-1 text-right font-bold text-[#d8d8d8]">
+                {q[key] != null ? `${(q[key] / 1e9).toFixed(2)}B` : 'N/A'}
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </motion.div>
   );
 };
 
@@ -446,9 +462,9 @@ export default function App() {
   const [cycleKey, setCycleKey] = useState(0);
   const socketRef = useRef(null);
   const [isAiActive, setIsAiActive] = useState(false);
-  const [audioData, setAudioData] = useState(new Uint8Array(0));
-  const [isVoicePlaying, setIsVoicePlaying] = useState(false);
+  const [companyData, setCompanyData] = useState(null);
   const [newsIdx, setNewsIdx] = useState(0);
+  const aiDismissTimer = useRef(null);
 
   useEffect(() => {
     const pulse = setInterval(() => setMasterTime(new Date()), 1000);
@@ -597,7 +613,25 @@ export default function App() {
         console.log("📥 Comando recibido:", data.command);
 
         if (data.command === "START_AI_MODE") {
-          setIsAiActive(true); // Cambiamos el alert por un estado de React
+          setIsAiActive(true);
+          // Cancelar cualquier timer de cierre anterior
+          if (aiDismissTimer.current) clearTimeout(aiDismissTimer.current);
+        }
+
+        if (data.command === "SHOW_COMPANY_DATA") {
+          setCompanyData(data.payload);
+          // Auto-dismiss a los 30 segundos
+          if (aiDismissTimer.current) clearTimeout(aiDismissTimer.current);
+          aiDismissTimer.current = setTimeout(() => {
+            setIsAiActive(false);
+            setCompanyData(null);
+          }, 30000);
+        }
+
+        if (data.command === "STOP_AI_MODE") {
+          setIsAiActive(false);
+          setCompanyData(null);
+          if (aiDismissTimer.current) clearTimeout(aiDismissTimer.current);
         }
 
         // Manejador del WebSocket de Cotizaciones ROFEX (Mercado Local)
@@ -609,7 +643,6 @@ export default function App() {
             // Si el precio cambió, aplicamos efecto de flash verde/rojo
             if (oldPrice && price !== oldPrice) {
               const direction = price > oldPrice ? 'up' : 'down';
-              // Usamos un identificador único para el flashMap de Rofex
               const flashKey = `rofex_${symbol}`;
               setFlashMap(fm => ({ ...fm, [flashKey]: direction }));
               setTimeout(() => setFlashMap(fm => {
@@ -621,43 +654,6 @@ export default function App() {
 
             return { ...prev, [symbol]: price };
           });
-        }
-
-        if (data.command === "PLAY_AUDIO") {
-          setIsVoicePlaying(true);
-          const audio = new Audio(data.payload.url);
-          audio.crossOrigin = "anonymous";
-
-          const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-          const analyser = audioCtx.createAnalyser();
-          const source = audioCtx.createMediaElementSource(audio);
-
-          source.connect(analyser);
-          analyser.connect(audioCtx.destination);
-
-          analyser.fftSize = 2048;
-          const bufferLength = analyser.frequencyBinCount;
-          const dataArray = new Uint8Array(bufferLength);
-
-          const updateLevel = () => {
-            if (audio.paused || audio.ended) {
-              setAudioData(new Uint8Array(0));
-              return;
-            }
-            analyser.getByteTimeDomainData(dataArray);
-            setAudioData(new Uint8Array(dataArray));
-            requestAnimationFrame(updateLevel);
-          };
-
-          audio.onended = () => {
-            setIsVoicePlaying(false);
-            setIsAiActive(false);
-            // Eliminamos setAudioLevel(1) porque no está definida y causaba el error
-            audioCtx.close();
-            setTimeout(() => setAudioData(new Uint8Array(0)), 800);
-          };
-
-          audio.play().then(() => updateLevel());
         }
       };
 
@@ -701,7 +697,9 @@ export default function App() {
 
 
 
-        <AIWaveform rawData={audioData} active={isAiActive} />
+        <AnimatePresence>
+          {isAiActive && <CompanyDataDisplay data={companyData} active={isAiActive} />}
+        </AnimatePresence>
 
         {/* W1: CHART (512px) */}
         <motion.div
