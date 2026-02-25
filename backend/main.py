@@ -13,6 +13,8 @@ from fastapi import Form
 import httpx
 import os
 import math
+import time
+import re
 from dotenv import load_dotenv
 load_dotenv()
 import pyRofex
@@ -199,6 +201,32 @@ TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN")
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000")
 
+# --- SESIÓN GLOBAL YAHOO FINANCE (para scraping sin rate limit) ---
+_yahoo_session = None
+_yahoo_session_ts = 0
+YAHOO_SESSION_TTL = 3600  # Refrescar cada hora
+
+def get_yahoo_session():
+    global _yahoo_session, _yahoo_session_ts
+    now = time.time()
+    if _yahoo_session is None or now - _yahoo_session_ts > YAHOO_SESSION_TTL:
+        _yahoo_session = requests.Session()
+        _yahoo_session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+        })
+        try:
+            _yahoo_session.get('https://finance.yahoo.com/', timeout=10)
+        except:
+            pass
+        _yahoo_session_ts = now
+    return _yahoo_session
+
+# --- CACHÉ TTL PARA DATOS DE EMPRESA ---
+_company_cache = {}
+COMPANY_CACHE_TTL = 600  # 10 minutos
+
 def fetch_ticker_data(t):
     try:
         asset = yf.Ticker(t)
@@ -221,57 +249,132 @@ def fetch_ticker_data(t):
         return {"symbol": t.replace("^", ""), "price": "0.00", "change": "0.00"}
 
 def parse_relative_time(relative_str):
-    """Convierte '25m ago' o '1h ago' en un HH:MM:SS real"""
+    """
+    Convierte strings relativos de Yahoo Finance ('58m ago', '1h ago', '2d ago')
+    en un HH:MM para mostrar y un unix timestamp para ordenar correctamente.
+    Retorna: (display_time: str, timestamp: int)
+    """
     now = datetime.now()
     try:
-        # Limpieza básica del string
         clean_str = relative_str.lower().replace('ago', '').strip()
-        if 'm' in clean_str:
-            mins = int(clean_str.split('m')[0])
-            dt = now - timedelta(minutes=mins)
-        elif 'h' in clean_str:
-            hrs = int(clean_str.split('h')[0])
-            dt = now - timedelta(hours=hrs)
-        else:
-            dt = now
-        return dt.strftime("%H:%M:%S")
+
+        m = re.search(r'(\d+)\s*d', clean_str)
+        if m:
+            dt = now - timedelta(days=int(m.group(1)))
+            return dt.strftime("%H:%M"), int(dt.timestamp())
+
+        m = re.search(r'(\d+)\s*h', clean_str)
+        if m:
+            dt = now - timedelta(hours=int(m.group(1)))
+            return dt.strftime("%H:%M"), int(dt.timestamp())
+
+        m = re.search(r'(\d+)\s*m', clean_str)
+        if m:
+            dt = now - timedelta(minutes=int(m.group(1)))
+            return dt.strftime("%H:%M"), int(dt.timestamp())
+
+        return now.strftime("%H:%M"), int(now.timestamp())
+
     except:
-        return now.strftime("%H:%M:%S")
+        return now.strftime("%H:%M"), int(now.timestamp())
 
 async def fetch_company_data(company_name: str):
-    """Busca una empresa por nombre y obtiene sus datos financieros con yfinance."""
-    
-    # 1. Resolver el ticker via Yahoo Finance search API
+    """Scraping directo de Yahoo Finance — sin rate limits de yfinance."""
+
+    # --- Caché ---
+    cache_key = company_name.lower().strip()
+    now = time.time()
+    if cache_key in _company_cache:
+        cached_data, cached_ts = _company_cache[cache_key]
+        if now - cached_ts < COMPANY_CACHE_TTL:
+            print(f"📦 Cache hit para: {company_name}")
+            return cached_data
+
+    # 1. Resolver ticker via Yahoo Finance search API (no tiene rate limit)
     search_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={company_name}&quotesCount=5&newsCount=0"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-    
     ticker_symbol = None
     company_full_name = company_name
-    
+
     async with httpx.AsyncClient(verify=False) as http_client:
         try:
-            resp = await http_client.get(search_url, headers=headers)
+            resp = await http_client.get(search_url, headers={"User-Agent": "Mozilla/5.0"})
             if resp.status_code == 200:
-                result = resp.json()
-                for quote in result.get("quotes", []):
+                for quote in resp.json().get("quotes", []):
                     if quote.get("quoteType") in ("EQUITY", "ETF"):
                         ticker_symbol = quote.get("symbol")
                         company_full_name = quote.get("longname") or quote.get("shortname") or company_name
                         break
         except Exception as e:
             print(f"⚠️ Error buscando ticker: {e}")
-    
+
     if not ticker_symbol:
         print(f"❌ No se encontró ticker para: {company_name}")
         return None
-    
+
     print(f"✅ Ticker encontrado: {ticker_symbol} ({company_full_name})")
-    
-    # 2. Obtener datos con yfinance
+
     try:
-        ticker_obj = yf.Ticker(ticker_symbol)
-        info = ticker_obj.info
-        
+        session = get_yahoo_session()
+
+        # 2. Scrapear página del quote (misma técnica que widget de noticias)
+        quote_url = f"https://finance.yahoo.com/quote/{ticker_symbol}/"
+        quote_resp = await asyncio.to_thread(lambda: session.get(quote_url, timeout=15))
+        soup = BeautifulSoup(quote_resp.text, 'html.parser')
+        scripts = soup.find_all('script', type='application/json')
+
+        quote_summary = None
+        ai_analysis = None
+
+        print(f"📄 Quote page status: {quote_resp.status_code} | HTML: {len(quote_resp.text)} chars | Scripts JSON: {len(scripts)}")
+        for di, s in enumerate(scripts):
+            t = s.string or s.get_text() or ''
+            if 'quoteSummary' in t:
+                idx = t.find('quoteSummary')
+                ctx = t[max(0, idx-5):idx+30]
+                print(f"  script[{di:02d}] {len(t):7d} chars | quoteSummary encontrado | contexto: ...{ctx}...")
+
+        def parse_script_body(text):
+            """Maneja dos formatos: {"body": "...json string..."} o el JSON directo."""
+            outer = json.loads(text)
+            if 'body' in outer and isinstance(outer['body'], str):
+                return json.loads(outer['body'])
+            return outer
+
+        for script in scripts:
+            text = script.string or script.get_text() or ''
+            if not text:
+                continue
+            if 'quoteSummary' in text and quote_summary is None:
+                try:
+                    body = parse_script_body(text)
+                    if body.get('quoteSummary', {}).get('result'):
+                        quote_summary = body['quoteSummary']['result'][0]
+                except Exception as e:
+                    print(f"⚠️ Error parseando quoteSummary: {e}")
+            if 'aiAnalysis' in text and ticker_symbol in text and ai_analysis is None:
+                try:
+                    body = parse_script_body(text)
+                    result = body.get('finance', {}).get('result', {})
+                    if ticker_symbol in result and 'aiAnalysis' in result[ticker_symbol]:
+                        ai_analysis = result[ticker_symbol]['aiAnalysis']
+                except Exception as e:
+                    print(f"⚠️ Error parseando aiAnalysis: {e}")
+
+        if not quote_summary:
+            qs_count = sum(1 for s in scripts if (s.string or s.get_text()) and 'quoteSummary' in (s.string or s.get_text()))
+            print(f"❌ No se pudo obtener quoteSummary para {ticker_symbol} (scripts con quoteSummary: {qs_count})")
+            return None
+
+        sd  = quote_summary.get('summaryDetail', {})
+        fd  = quote_summary.get('financialData', {})
+        dks = quote_summary.get('defaultKeyStatistics', {})
+        pi  = quote_summary.get('price', {})
+        sp  = quote_summary.get('summaryProfile', {})
+
+        def raw(d, key):
+            v = d.get(key)
+            return v.get('raw') if isinstance(v, dict) else v
+
         def safe(val):
             try:
                 if val is None: return None
@@ -279,64 +382,123 @@ async def fetch_company_data(company_name: str):
                 return val
             except:
                 return None
-        
+
+        chg_raw = raw(pi, 'regularMarketChangePercent')
         indicators = {
-            "price":             safe(info.get("currentPrice") or info.get("regularMarketPrice")),
-            "change_pct":        safe(info.get("regularMarketChangePercent")),
-            "marketCap":         safe(info.get("marketCap")),
-            "trailingPE":        safe(info.get("trailingPE")),
-            "forwardPE":         safe(info.get("forwardPE")),
-            "trailingEps":       safe(info.get("trailingEps")),
-            "beta":              safe(info.get("beta")),
-            "fiftyTwoWeekHigh":  safe(info.get("fiftyTwoWeekHigh")),
-            "fiftyTwoWeekLow":   safe(info.get("fiftyTwoWeekLow")),
-            "grossMargins":      safe(info.get("grossMargins")),
-            "operatingMargins":  safe(info.get("operatingMargins")),
-            "profitMargins":     safe(info.get("profitMargins")),
-            "debtToEquity":      safe(info.get("debtToEquity")),
-            "returnOnEquity":    safe(info.get("returnOnEquity")),
-            "returnOnAssets":    safe(info.get("returnOnAssets")),
-            "sector":            info.get("sector"),
-            "exchange":          info.get("exchange"),
+            "price":            safe(raw(fd, 'currentPrice') or raw(pi, 'regularMarketPrice')),
+            "change_pct":       safe(chg_raw * 100 if chg_raw is not None else None),
+            "marketCap":        safe(raw(sd, 'marketCap')),
+            "trailingPE":       safe(raw(sd, 'trailingPE')),
+            "forwardPE":        safe(raw(sd, 'forwardPE')),
+            "trailingEps":      safe(raw(dks, 'trailingEps')),
+            "beta":             safe(raw(sd, 'beta')),
+            "fiftyTwoWeekHigh": safe(raw(sd, 'fiftyTwoWeekHigh')),
+            "fiftyTwoWeekLow":  safe(raw(sd, 'fiftyTwoWeekLow')),
+            "grossMargins":     safe(raw(fd, 'grossMargins')),
+            "operatingMargins": safe(raw(fd, 'operatingMargins')),
+            "profitMargins":    safe(raw(fd, 'profitMargins')),
+            "debtToEquity":     safe(raw(fd, 'debtToEquity')),
+            "returnOnEquity":   safe(raw(fd, 'returnOnEquity')),
+            "returnOnAssets":   safe(raw(fd, 'returnOnAssets')),
+            "sector":           sp.get('sector'),
+            "exchange":         pi.get('exchangeName') or pi.get('exchange'),
+            # defaultKeyStatistics
+            "forwardEps":              safe(raw(dks, 'forwardEps')),
+            "bookValue":               safe(raw(dks, 'bookValue')),
+            "priceToBook":             safe(raw(dks, 'priceToBook')),
+            "enterpriseValue":         safe(raw(dks, 'enterpriseValue')),
+            "enterpriseToRevenue":     safe(raw(dks, 'enterpriseToRevenue')),
+            "enterpriseToEbitda":      safe(raw(dks, 'enterpriseToEbitda')),
+            "shortRatio":              safe(raw(dks, 'shortRatio')),
+            "shortPercentOfFloat":     safe(raw(dks, 'shortPercentOfFloat')),
+            "heldPercentInsiders":     safe(raw(dks, 'heldPercentInsiders')),
+            "heldPercentInstitutions": safe(raw(dks, 'heldPercentInstitutions')),
+            "weekChange52":            safe(raw(dks, '52WeekChange')),
+            # summaryDetail
+            "previousClose":        safe(raw(sd, 'previousClose')),
+            "open":                 safe(raw(sd, 'open')),
+            "dayHigh":              safe(raw(sd, 'dayHigh')),
+            "dayLow":               safe(raw(sd, 'dayLow')),
+            "bid":                  safe(raw(sd, 'bid')),
+            "ask":                  safe(raw(sd, 'ask')),
+            "volume":               safe(raw(sd, 'volume')),
+            "averageVolume":        safe(raw(sd, 'averageVolume')),
+            "dividendYield":        safe(raw(sd, 'trailingAnnualDividendYield')),
+            "fiftyDayAverage":      safe(raw(sd, 'fiftyDayAverage')),
+            "twoHundredDayAverage": safe(raw(sd, 'twoHundredDayAverage')),
         }
-        
-        # 3. Income statement trimestral (ultimos 4 trimestres)
+
+        # 3. Income statement trimestral via timeseries API (endpoint distinto, sin rate limit)
         income = []
         try:
-            stmt = await asyncio.to_thread(lambda: ticker_obj.quarterly_income_stmt)
-            if stmt is not None and not stmt.empty:
-                row_map = {
-                    "Total Revenue":    "revenue",
-                    "Gross Profit":     "grossProfit",
-                    "Operating Income": "operatingIncome",
-                    "Pretax Income":    "pretaxIncome",
-                    "Net Income":       "netIncome",
-                }
-                for col in stmt.columns[:4]:
-                    period_label = col.strftime("%b %Y") if hasattr(col, "strftime") else str(col)
-                    period_data = {"period": period_label}
-                    for src_key, dst_key in row_map.items():
-                        if src_key in stmt.index:
-                            try:
-                                val = float(stmt.loc[src_key, col])
-                                period_data[dst_key] = None if math.isnan(val) else val
-                            except:
-                                period_data[dst_key] = None
-                        else:
-                            period_data[dst_key] = None
-                    income.append(period_data)
+            ts_url = f"https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/{ticker_symbol}"
+            ts_params = {
+                'type': 'quarterlyTotalRevenue,quarterlyGrossProfit,quarterlyOperatingIncome,quarterlyPretaxIncome,quarterlyNetIncome',
+                'period1': '1609459200',
+                'period2': str(int(time.time()) + 86400),
+            }
+            ts_resp = await asyncio.to_thread(lambda: session.get(ts_url, params=ts_params, timeout=15))
+            if ts_resp.status_code == 200:
+                ts_by_type = {}
+                for item in ts_resp.json().get('timeseries', {}).get('result', []):
+                    t = item.get('meta', {}).get('type', [''])[0]
+                    ts_by_type[t] = item.get(t, [])
+
+                rev_list  = ts_by_type.get('quarterlyTotalRevenue',    [])[-4:]
+                gp_list   = ts_by_type.get('quarterlyGrossProfit',     [])[-4:]
+                oi_list   = ts_by_type.get('quarterlyOperatingIncome', [])[-4:]
+                pt_list   = ts_by_type.get('quarterlyPretaxIncome',    [])[-4:]
+                ni_list   = ts_by_type.get('quarterlyNetIncome',       [])[-4:]
+
+                def get_val(lst, i):
+                    if i < len(lst):
+                        v = lst[i].get('reportedValue', {})
+                        return safe(v.get('raw') if isinstance(v, dict) else v)
+                    return None
+
+                for i, rev in enumerate(rev_list):
+                    period = rev.get('asOfDate', '')
+                    try:
+                        from datetime import datetime as _dt
+                        d = _dt.strptime(period, '%Y-%m-%d')
+                        period_label = f"Q{(d.month - 1) // 3 + 1} {d.year}"
+                    except:
+                        period_label = period
+                    income.append({
+                        "period":          period_label,
+                        "revenue":         get_val(rev_list, i),
+                        "grossProfit":     get_val(gp_list, i),
+                        "operatingIncome": get_val(oi_list, i),
+                        "pretaxIncome":    get_val(pt_list, i),
+                        "netIncome":       get_val(ni_list, i),
+                    })
         except Exception as e:
             print(f"⚠️ Error obteniendo income statement: {e}")
-        
-        return {
-            "ticker": ticker_symbol,
-            "name":   company_full_name,
-            "indicators": indicators,
-            "income": income,
+
+        # 4. Yahoo Scout — primer párrafo del análisis IA
+        scout_summary = None
+        if ai_analysis:
+            try:
+                ns_inner = ai_analysis.get('data', {}).get('news_summary', {}).get('news_summary', {})
+                tldr = ns_inner.get('tldr') if isinstance(ns_inner, dict) else None
+                if tldr:
+                    scout_summary = re.sub(r'\*\*([^*]+)\*\*', r'\1', tldr)
+            except:
+                pass
+
+        result = {
+            "ticker":        ticker_symbol,
+            "name":          company_full_name,
+            "indicators":    indicators,
+            "income":        income,
+            "scout_summary": scout_summary,
         }
-    
+
+        _company_cache[cache_key] = (result, time.time())
+        return result
+
     except Exception as e:
-        print(f"❌ Error yfinance para {ticker_symbol}: {e}")
+        print(f"❌ Error scraping Yahoo Finance para {ticker_symbol}: {e}")
         return None
 
 @app.post("/whatsapp")
@@ -481,10 +643,12 @@ def get_latest_scraping():
                     ticker = ticker_span.text.strip().replace("^", "") if ticker_span else "MKT"
 
                     # Creamos la nueva entrada con el tiempo fijo "congelado"
+                    display_time, timestamp = parse_relative_time(rel_time)
                     new_entries.append({
                         "headline": headline,
                         "date": datetime.now().strftime("%d/%m/%y"),
-                        "time": parse_relative_time(rel_time), # Solo se calcula una vez
+                        "time": display_time,       # HH:MM para mostrar
+                        "timestamp": timestamp,     # Unix timestamp para ordenar
                         "ticker": ticker,
                         "source": source
                     })
@@ -492,9 +656,8 @@ def get_latest_scraping():
                 print(f"Error procesando artículo: {e}")
                 continue
 
-        # 2. Ordenamos cronológicamente (de más antiguo a más reciente) para la rotación del frontend
-        # Asumiendo formato "HH:MM:SS"
-        new_entries.sort(key=lambda x: datetime.strptime(x["time"], "%H:%M:%S"), reverse=True)
+        # 2. Ordenamos de más antiguo a más reciente por timestamp unix (evita bugs al cruzar medianoche)
+        new_entries.sort(key=lambda x: x.get("timestamp", 0))
 
         # 3. Actualizamos el STACK global
         NEWS_STACK = new_entries

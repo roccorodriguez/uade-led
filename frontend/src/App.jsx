@@ -100,10 +100,9 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
   const [lineClip, setLineClip] = useState(0);
   const [priceInfo, setPriceInfo] = useState(null);
   const [labelAnim, setLabelAnim] = useState('');
-  const isMounted = useRef(true);
-
   useEffect(() => {
-    isMounted.current = true;
+    let cancelled = false;
+    const controller = new AbortController();
 
     const runSequence = async () => {
       // RESET: Todo limpio
@@ -113,10 +112,13 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
       setPriceInfo(null);
 
       try {
-        const res = await fetch(`${API_BASE}/api/chart/${ticker}`);
+        // Timeout de 8s para evitar que el fetch se cuelgue indefinidamente
+        const fetchTimeout = setTimeout(() => controller.abort(), 8000);
+        const res = await fetch(`${API_BASE}/api/chart/${ticker}`, { signal: controller.signal });
+        clearTimeout(fetchTimeout);
         const data = await res.json();
 
-        if (!isMounted.current) return;
+        if (cancelled) return;
 
         if (data && data.length > 0) {
           setSeries([
@@ -127,50 +129,59 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
           const lastPrice = data[data.length - 1].value;
           const firstPrice = data[0].value;
           const pctChange = ((lastPrice - firstPrice) / firstPrice * 100);
-          if (isMounted.current) setPriceInfo({ price: lastPrice, change: pctChange });
+          if (!cancelled) setPriceInfo({ price: lastPrice, change: pctChange });
 
           // 1. ENTRADA: Fundido de escalas, luego barrido de línea
           await new Promise(r => setTimeout(r, 500));
-          if (isMounted.current) setScalesOpacity(1);
+          if (cancelled) return;
+          setScalesOpacity(1);
 
           await new Promise(r => setTimeout(r, 600));
-          if (isMounted.current) setLineClip(100);
+          if (cancelled) return;
+          setLineClip(100);
 
           // 2. Etiqueta aparece con barrido cuando la línea terminó
           await new Promise(r => setTimeout(r, 1600));
-          if (isMounted.current) setLabelAnim('enter');
+          if (cancelled) return;
+          setLabelAnim('enter');
 
           // 3. PAUSA de visualización
           await new Promise(r => setTimeout(r, 5000));
+          if (cancelled) return;
 
-          if (isMounted.current) {
-            // 4. SALIDA: barrido inverso de la etiqueta
-            setLabelAnim('exit');
-            await new Promise(r => setTimeout(r, 600));
+          // 4. SALIDA: barrido inverso de la etiqueta
+          setLabelAnim('exit');
+          await new Promise(r => setTimeout(r, 600));
+          if (cancelled) return;
 
-            // 5. El barrido de la línea arranca
-            if (isMounted.current) setLineClip(0);
+          // 5. El barrido de la línea arranca
+          setLineClip(0);
 
-            // 4. FUNDIDO DE ESCALAS: Arranca justo antes de que termine el barrido (800ms)
-            await new Promise(r => setTimeout(r, 800));
-            if (isMounted.current) setScalesOpacity(0);
+          // 6. FUNDIDO DE ESCALAS
+          await new Promise(r => setTimeout(r, 800));
+          if (cancelled) return;
+          setScalesOpacity(0);
 
-            // 5. ESPERA FINAL: Completar animaciones (1.5s totales)
-            await new Promise(r => setTimeout(r, 1500));
-            if (isMounted.current) onCycleComplete();
-          }
+          // 7. ESPERA FINAL: Completar animaciones
+          await new Promise(r => setTimeout(r, 1500));
+          if (cancelled) return;
+          onCycleComplete();
         } else {
-          // Fallback para evitar bloqueos si no hay datos
+          // Sin datos: avanzar al siguiente ticker
           await new Promise(r => setTimeout(r, 1000));
-          if (isMounted.current) onCycleComplete();
+          if (!cancelled) onCycleComplete();
         }
       } catch (e) {
-        if (isMounted.current) onCycleComplete();
+        // Error o abort (timeout/unmount): avanzar al siguiente ticker
+        if (!cancelled) onCycleComplete();
       }
     };
 
     runSequence();
-    return () => { isMounted.current = false; };
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [ticker]);
 
   // Bloomberg Terminal Style: exact replica
@@ -282,7 +293,7 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
           </div>
           <div className="flex justify-between items-center mt-[1px]">
             <span className="flex items-center gap-[3px] text-[#999]"><span className="w-1.5 h-1.5 bg-[#999] inline-block"></span>Change %</span>
-            <span className={priceInfo?.change >= 0 ? "text-[#00ff00]" : "text-[#ff0000]"}>
+            <span className={priceInfo?.change >= 0 ? "text-emerald-400" : "text-[#ff0000]"}>
               {priceInfo ? `${priceInfo.change > 0 ? '+' : ''}${priceInfo.change.toFixed(2)}%` : '-'}
             </span>
           </div>
@@ -347,98 +358,229 @@ const MarqueeHeadline = ({ text, maxDuration, id }) => {
   );
 };
 
-const CompanyDataDisplay = ({ data, active }) => {
-  if (!active || !data) return null;
+const AnimatedTypingText = ({ text, isPos = true }) => {
+  const [displayedText, setDisplayedText] = useState('');
+  const containerRef = useRef(null);
 
-  const { ticker, name, indicators, income } = data;
+  useEffect(() => {
+    setDisplayedText('');
+    if (!text) return;
+
+    let i = 0;
+    const interval = setInterval(() => {
+      setDisplayedText(text.substring(0, i + 1));
+      i++;
+      if (i >= text.length) clearInterval(interval);
+    }, 20); // Velocidad de tipeo: 20ms por letra
+
+    return () => clearInterval(interval);
+  }, [text]);
+
+  useEffect(() => {
+    if (containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+    }
+  }, [displayedText]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="max-h-[115px] overflow-y-auto ai-scroll-container"
+      style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+    >
+      <style>{`.ai-scroll-container::-webkit-scrollbar { display: none; }`}</style>
+      <span className="relative">
+        {displayedText}
+        <span className={`inline-block w-[4px] h-[12px] ml-1 animate-pulse align-baseline ${isPos ? 'bg-emerald-400' : 'bg-red-400'}`} />
+      </span>
+    </div>
+  );
+};
+
+const CompanyDataDisplay = ({ data, active }) => {
+  const [timeLeft, setTimeLeft] = useState(30);
+
+  useEffect(() => {
+    if (active) {
+      setTimeLeft(30);
+      const timer = setInterval(() => {
+        setTimeLeft(prev => Math.max(0, prev - 1));
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+  }, [active, data?.ticker]);
+
+  if (!active) return null;
+
+  if (!data) {
+    return (
+      <motion.div
+        className="absolute inset-0 z-50 flex items-center justify-center bg-[#020202] font-mono overflow-hidden h-[192px]"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.6, ease: [0.4, 0, 0.2, 1] }}
+      >
+        {/* Respiration / Breathing white glow effect */}
+        <motion.div
+          animate={{ opacity: [0.03, 0.15, 0.03], scale: [0.9, 1.05, 0.9] }}
+          transition={{ duration: 2.5, repeat: Infinity, ease: "easeInOut" }}
+          className="absolute w-full h-[400px] bg-[radial-gradient(ellipse_at_center,rgba(255,255,255,0.8)_0%,transparent_40%)] pointer-events-none"
+        />
+
+        <div className="z-10 flex flex-col items-center gap-3">
+          <div className="text-white/60 text-[10px] uppercase tracking-[0.4em] font-bold animate-pulse">
+            Processing Information
+          </div>
+          <motion.div
+            className="h-[1px] bg-white/40 shadow-[0_0_8px_rgba(255,255,255,0.8)]"
+            animate={{ width: ['0px', '150px', '0px'], opacity: [0, 1, 0] }}
+            transition={{ duration: 2.5, repeat: Infinity, ease: "easeInOut" }}
+          />
+        </div>
+      </motion.div>
+    );
+  }
+
+  const { ticker, name, indicators, income, scout_summary } = data;
   const {
     price, change_pct, marketCap, trailingPE, forwardPE, trailingEps,
     beta, fiftyTwoWeekHigh, fiftyTwoWeekLow,
     grossMargins, operatingMargins, profitMargins,
     debtToEquity, returnOnEquity, returnOnAssets,
     sector, exchange,
+    forwardEps, bookValue, priceToBook, enterpriseValue,
+    enterpriseToRevenue, enterpriseToEbitda, shortRatio,
+    shortPercentOfFloat, heldPercentInsiders, heldPercentInstitutions, weekChange52,
+    previousClose, open, dayHigh, dayLow, bid, ask,
+    volume, averageVolume, dividendYield, fiftyDayAverage, twoHundredDayAverage,
   } = indicators;
 
-  const fmtB   = (v) => v != null ? `${(v / 1e9).toFixed(2)}B` : 'N/A';
-  const fmtPct = (v) => v != null ? `${(v * 100).toFixed(2)}%` : 'N/A';
   const fmtNum = (v) => v != null ? v.toFixed(2) : 'N/A';
-  const isPos  = change_pct > 0;
+  const fmtPct = (v) => v != null ? `${(v * 100).toFixed(2)}%` : 'N/A';
+  const fmtLarge = (v) => {
+    if (v == null) return 'N/A';
+    if (v >= 1e12) return `${(v / 1e12).toFixed(2)}T`;
+    if (v >= 1e9) return `${(v / 1e9).toFixed(2)}B`;
+    return `${(v / 1e6).toFixed(0)}M`;
+  };
+  const fmtVol = (v) => {
+    if (v == null) return 'N/A';
+    if (v >= 1e9) return `${(v / 1e9).toFixed(2)}B`;
+    if (v >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
+    return `${(v / 1e3).toFixed(1)}K`;
+  };
+  const isPos = change_pct > 0;
 
   const kpis = [
-    { label: 'MKT CAP',  value: fmtB(marketCap) },
-    { label: 'P/E TTM',  value: fmtNum(trailingPE) },
-    { label: 'P/E FWD',  value: fmtNum(forwardPE) },
-    { label: 'EPS TTM',  value: fmtNum(trailingEps) },
-    { label: 'BETA',     value: fmtNum(beta) },
-    { label: '52W HIGH', value: fmtNum(fiftyTwoWeekHigh) },
-    { label: '52W LOW',  value: fmtNum(fiftyTwoWeekLow) },
-    { label: 'ROE',      value: fmtPct(returnOnEquity) },
-    { label: 'ROA',      value: fmtPct(returnOnAssets) },
-    { label: 'GROSS M.', value: fmtPct(grossMargins) },
-    { label: 'OPER. M.', value: fmtPct(operatingMargins) },
-    { label: 'D/E',      value: fmtNum(debtToEquity) },
-  ];
+    { label: 'MKT CAP', value: fmtLarge(marketCap) },
+    { label: 'P/E TTM', value: fmtNum(trailingPE) },
+    { label: 'BETA', value: fmtNum(beta) },
+    { label: 'ENT. VAL', value: fmtLarge(enterpriseValue) },
+    { label: 'EPS TTM', value: fmtNum(trailingEps) },
+    { label: '52W CHG', value: fmtPct(weekChange52) },
+    { label: 'OPEN', value: fmtNum(open) },
+    { label: 'DAY HIGH', value: fmtNum(dayHigh) },
+    { label: 'DAY LOW', value: fmtNum(dayLow) },
+    { label: 'DIV YIELD', value: fmtPct(dividendYield) },
+    { label: 'VOLUME', value: fmtVol(volume) },
+    { label: 'AVG VOL', value: fmtVol(averageVolume) },
+    { label: 'FWD P/E', value: fmtNum(forwardPE) },
+    { label: 'ROE', value: fmtPct(returnOnEquity) },
+    { label: 'NET MGN', value: fmtPct(profitMargins) },
+    { label: 'DEBT/EQ', value: fmtNum(debtToEquity) },
+    { label: 'EV/EBITDA', value: fmtNum(enterpriseToEbitda) },
+    { label: 'P/BOOK', value: fmtNum(priceToBook) },
+  ]; // 18 items (6 filas x 3 columnas)
 
   const incomeRows = [
     { label: 'TOTAL REVENUE', key: 'revenue' },
-    { label: 'GROSS PROFIT',  key: 'grossProfit' },
-    { label: 'OPER. INCOME',  key: 'operatingIncome' },
-    { label: 'PRE-TAX INC.',  key: 'pretaxIncome' },
-    { label: 'NET INCOME',    key: 'netIncome' },
+    { label: 'GROSS PROFIT', key: 'grossProfit' },
+    { label: 'OPER. INCOME', key: 'operatingIncome' },
+    { label: 'PRE-TAX INC.', key: 'pretaxIncome' },
+    { label: 'NET INCOME', key: 'netIncome' },
   ];
 
   return (
     <motion.div
-      className="absolute inset-0 z-50 flex items-stretch bg-black font-mono overflow-hidden"
+      className="absolute inset-0 z-50 flex bg-[#030303] font-mono overflow-hidden h-[192px]"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.6, ease: [0.4, 0, 0.2, 1] }}
     >
-      {/* LEFT: Identidad de la empresa */}
-      <div className="w-[270px] flex flex-col justify-center px-5 border-r border-[#2a2a2a] shrink-0">
-        <div className="text-[30px] font-bold text-white leading-none tracking-widest">{ticker}</div>
-        <div className="text-[10px] text-[#999] mt-1 leading-tight truncate">{name}</div>
-        <div className="text-[9px] text-[#555] mt-[3px] uppercase tracking-wider">{sector} · {exchange}</div>
-        <div className="mt-3 flex items-baseline gap-2">
-          <span className="text-[22px] font-bold text-white leading-none">${fmtNum(price)}</span>
-          <span className={`text-[12px] font-bold ${isPos ? 'text-[#00ff88]' : 'text-[#ff4444]'}`}>
+      {/* ── COL 1: Identidad de Empresa (320px) ── */}
+      <div
+        className="flex flex-col justify-center px-6 border-r border-[#222] shrink-0 bg-[#000]"
+        style={{ width: '320px' }}
+      >
+        <div className="text-[36px] font-bold text-white leading-none tracking-widest truncate">{ticker}</div>
+        <div className="text-[13px] text-[#999] mt-2 leading-tight truncate">{name}</div>
+        <div className="text-[10px] text-[#555] mt-1 uppercase tracking-wider truncate">{sector} · {exchange}</div>
+        <div className="mt-5 flex items-baseline gap-3">
+          <span className="text-[32px] font-bold text-white leading-none">${fmtNum(price)}</span>
+          <span className={`text-[15px] font-bold ${isPos ? 'text-emerald-400' : 'text-red-400'}`}>
             {isPos ? '+' : ''}{fmtNum(change_pct)}%
           </span>
         </div>
       </div>
 
-      {/* MIDDLE: KPIs grid */}
-      <div className="flex-1 flex flex-col justify-center px-5 border-r border-[#2a2a2a]">
-        <div className="grid grid-cols-4 gap-x-5 gap-y-[5px]">
+      {/* ── COL 2: KPIs grid comprimido (580px) ── */}
+      <div
+        className="flex flex-col justify-center px-8 border-r border-[#222] shrink-0 overflow-hidden"
+        style={{ width: '580px' }}
+      >
+        <div
+          className="grid gap-x-6 gap-y-[5px]"
+          style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}
+        >
           {kpis.map(({ label, value }) => (
-            <div key={label} className="flex flex-col">
-              <span className="text-[8px] text-[#555] uppercase tracking-widest leading-none">{label}</span>
-              <span className="text-[11px] font-bold text-[#e8e8e8] leading-tight mt-[2px]">{value}</span>
+            <div key={label} className="flex justify-between items-center overflow-hidden border-b border-[#111] pb-[2px]">
+              <span className="text-[8.5px] text-[#666] uppercase tracking-wider leading-none truncate shrink-0 pr-2">{label}</span>
+              <span className="text-[12px] font-bold text-[#eaeaea] leading-tight truncate text-right">{value}</span>
             </div>
           ))}
         </div>
       </div>
 
-      {/* RIGHT: Income Statement trimestral */}
-      <div className="w-[720px] flex flex-col justify-center px-5 shrink-0">
-        {/* Header */}
-        <div className="flex items-center text-[8px] uppercase tracking-widest mb-[5px] pb-[4px] border-b border-[#2a2a2a]">
-          <div className="w-[130px] text-[#444]">INCOME STMT</div>
+      {/* ── COL 3: Yahoo Scout Animated Text (Flexible width) ── */}
+      <div className={`flex-1 flex flex-col justify-center px-8 border-r border-[#222] relative overflow-hidden bg-[#000] ${isPos ? 'shadow-[inset_0_0_80px_rgba(52,211,153,0.02)]' : 'shadow-[inset_0_0_80px_rgba(248,113,113,0.02)]'}`}>
+        <div className={`absolute top-4 left-6 flex items-center gap-[6px] shrink-0 px-2.5 py-[4px] border rounded-[2px] glow-pulse ${isPos ? 'bg-emerald-400/10 border-emerald-400/30 shadow-[0_0_15px_rgba(52,211,153,0.15)]' : 'bg-red-400/10 border-red-400/30 shadow-[0_0_15px_rgba(248,113,113,0.15)]'}`}>
+          <span className={`w-[6px] h-[6px] rounded-full animate-pulse ${isPos ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-red-400 shadow-[0_0_8px_#f87171]'}`} />
+          <span className={`text-[11px] font-bold uppercase tracking-[0.25em] ${isPos ? 'text-emerald-400' : 'text-red-400'}`}>Returning in 00:{timeLeft.toString().padStart(2, '0')}</span>
+        </div>
+
+        {scout_summary ? (
+          <div className="mt-12 text-[15px] leading-[1.6] text-[#e0e0e0] font-sans pr-4 tracking-wide font-medium">
+            <AnimatedTypingText text={scout_summary} isPos={isPos} />
+          </div>
+        ) : (
+          <div className="mt-12 text-[14px] text-[#444] italic uppercase tracking-widest animate-pulse">
+            Analyzing market data...
+          </div>
+        )}
+      </div>
+
+      {/* ── COL 4: Income Statement (580px) ── */}
+      <div
+        className="flex flex-col justify-center px-6 shrink-0 bg-[#060606]"
+        style={{ width: '580px' }}
+      >
+        <div className="flex items-center text-[9px] uppercase tracking-widest mb-[6px] pb-[5px] border-b border-[#333]">
+          <div className="w-[120px] text-[#555] shrink-0">INCOME STMT</div>
           {income.map((q, i) => (
-            <div key={i} className="flex-1 text-right text-[#666]">{q.period}</div>
+            <div key={i} className="flex-1 text-right text-[#777]">{q.period}</div>
           ))}
         </div>
-        {/* Filas */}
         {incomeRows.map(({ label, key }, rowIdx) => (
           <div
             key={key}
-            className="flex items-center text-[10px] py-[3px]"
-            style={{ backgroundColor: rowIdx % 2 === 0 ? '#0a0a0a' : 'transparent' }}
+            className="flex items-center py-[5px]"
+            style={{ backgroundColor: rowIdx % 2 === 0 ? '#161616' : 'transparent' }}
           >
-            <div className="w-[130px] text-[8px] text-[#777] uppercase tracking-wider shrink-0">{label}</div>
+            <div className="w-[120px] text-[9px] text-[#888] uppercase tracking-wider shrink-0">{label}</div>
             {income.map((q, i) => (
-              <div key={i} className="flex-1 text-right font-bold text-[#d8d8d8]">
+              <div key={i} className="flex-1 text-right text-[12px] font-bold text-[#d0d0d0]">
                 {q[key] != null ? `${(q[key] / 1e9).toFixed(2)}B` : 'N/A'}
               </div>
             ))}
@@ -501,7 +643,12 @@ export default function App() {
         const newPrices = responseData.global;
         // Cargamos el estado inicial de Rofex
         if (responseData.rofex) {
-          setRofexPrices(current => ({ ...responseData.rofex, ...current }));
+          setRofexPrices(current => {
+            if (Object.keys(current).length === 0) {
+              return responseData.rofex;
+            }
+            return current;
+          });
         }
 
         const prev = prevPricesRef.current;
@@ -678,6 +825,91 @@ export default function App() {
     };
   }, []);
 
+  // --- EFECTO DE COTIZACIONES FALSAS PARA WIDGET 2 ---
+  useEffect(() => {
+    // Array de los símbolos a simular (mezcla de Rofex y Acciones locales)
+    const mockSymbols = [
+      "DLR/FEB26", "DLR/MAR26", "DLR/ABR26", "DLR/MAY26",
+      "DLR/JUN26", "DLR/JUL26", "DLR/AGO26", "DLR/SEP26",
+      "BMA - 48hs", "BYMA - 48hs", "CEPU - 48hs", "GGAL - 48hs",
+      "PAMP - 48hs", "YPFD - 48hs", "TECO2 - 48hs", "LOMA - 48hs",
+      "PESOS - 1D", "PESOS - 3D", "PESOS - 7D", "PESOS - 30D",
+      "DOLARES - 1D", "DOLARES - 3D", "DOLARES - 7D", "DOLARES - 30D"
+    ];
+
+    // Valores iniciales "estáticos" en caso de que aún no existan
+    const initialValues = {
+      "DLR/FEB26": 1418.00, "DLR/MAR26": 1432.00, "DLR/ABR26": 1446.00, "DLR/MAY26": 1456.00,
+      "DLR/JUN26": 1464.00, "DLR/JUL26": 1473.00, "DLR/AGO26": 1482.00, "DLR/SEP26": 1491.00,
+      "BMA - 48hs": 13300.00, "BYMA - 48hs": 301.25, "CEPU - 48hs": 301.25, "GGAL - 48hs": 6850.00,
+      "PAMP - 48hs": 4815.00, "YPFD - 48hs": 55950.00, "TECO2 - 48hs": 3285.00, "LOMA - 48hs": 3287.50,
+      "PESOS - 1D": 30.25, "PESOS - 3D": 30.50, "PESOS - 7D": 31.80, "PESOS - 30D": 34.10,
+      "DOLARES - 1D": 2.15, "DOLARES - 3D": 2.30, "DOLARES - 7D": 2.45, "DOLARES - 30D": 3.10
+    };
+
+    // Rellenamos el estado con los valores estáticos si están vacíos
+    setRofexPrices(prev => ({ ...initialValues, ...prev }));
+
+    const simulateTick = () => {
+      // Elegir 1 a 3 símbolos al azar para actualizar
+      const numToUpdate = Math.floor(Math.random() * 3) + 1;
+
+      setRofexPrices(prev => {
+        const nextState = { ...prev };
+        const keysToUpdate = [];
+
+        for (let i = 0; i < numToUpdate; i++) {
+          const sym = mockSymbols[Math.floor(Math.random() * mockSymbols.length)];
+          keysToUpdate.push(sym);
+
+          let currentVal = nextState[sym] || 1000;
+
+          // Lógica de fluctuación: las tasas fluctúan menos que los precios
+          const isRate = sym.includes("PESOS") || sym.includes("DOLARES");
+          const isUsdRate = sym.includes("DOLARES");
+
+          let change;
+          if (isRate) {
+            change = (Math.random() - 0.5) * (isUsdRate ? 0.05 : 0.5); // Tasas fluctúan poquito
+          } else {
+            // Precios fluctúan entre -0.5% y +0.5%
+            change = currentVal * ((Math.random() - 0.5) * 0.01);
+          }
+
+          const newVal = currentVal + change;
+
+          // Solo actualizamos si el cambio es significativo (para evitar triggers en falso)
+          if (Math.abs(newVal - currentVal) > 0.001) {
+            nextState[sym] = newVal;
+
+            // Disparar flash
+            const direction = newVal > currentVal ? 'up' : 'down';
+            const flashKey = `rofex_${sym}`;
+
+            setFlashMap(fm => ({ ...fm, [flashKey]: direction }));
+            setTimeout(() => setFlashMap(fm => {
+              const copy = { ...fm };
+              delete copy[flashKey];
+              return copy;
+            }), 800);
+          }
+        }
+        return nextState;
+      });
+    };
+
+    // Actualiza precios cada 800ms a 2000ms al azar
+    const runSimulation = () => {
+      simulateTick();
+      const nextTimeout = 800 + Math.random() * 1200;
+      simTimer = setTimeout(runSimulation, nextTimeout);
+    };
+
+    let simTimer = setTimeout(runSimulation, 2000);
+
+    return () => clearTimeout(simTimer);
+  }, []);
+
   // --- LÓGICA DE SENTIMIENTO (Se mantiene igual) ---
   const pricesArray = Array.isArray(prices) ? prices : [];
   const positiveCount = pricesArray.filter(p => p && p.change && parseFloat(p.change) > 0).length;
@@ -704,7 +936,7 @@ export default function App() {
         {/* W1: CHART (512px) */}
         <motion.div
           animate={{ y: isAiActive ? -200 : 0 }}
-          transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1] }}
+          transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
           className="w-[512px] h-full border-r border-[#333] relative shrink-0 overflow-hidden bg-black"
         >
           <AnimatePresence mode="wait">
@@ -724,11 +956,12 @@ export default function App() {
           </AnimatePresence>
         </motion.div>
 
-        {/* W2: MARKET WATCH (512px) */}
+        {/* W2: MARKET WATCH (576px) */}
         <motion.div
           animate={{ y: isAiActive ? 200 : 0 }}
-          transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1] }}
-          className="w-[576px] h-full border-r border-gray-800 shrink-0 bg-black flex flex-col justify-center">
+          transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
+          className="w-[576px] h-full border-r border-white/5 shrink-0 bg-[#070707] flex flex-col shadow-[inset_0_0_40px_rgba(0,0,0,0.8)]">
+
           <div className="flex w-full h-full">
             {(() => {
               // Helpers de formateo
@@ -742,7 +975,8 @@ export default function App() {
               const columns = [
                 {
                   title: "DÓLAR FUTURO",
-                  flex: "w-[31%]",
+                  flex: "w-[33%]",
+                  priceMin: "min-w-[62px]",
                   items: [
                     { label: "DLR/FEB26", sym: "DLR/FEB26", val: safeGet("DLR/FEB26"), type: "price" },
                     { label: "DLR/MAR26", sym: "DLR/MAR26", val: safeGet("DLR/MAR26"), type: "price" },
@@ -756,12 +990,13 @@ export default function App() {
                 },
                 {
                   title: "CAUCIONES (TNA)",
-                  flex: "w-[37%]",
+                  flex: "w-[38%]",
+                  priceMin: "min-w-[50px]",
                   items: [
-                    { label: "PESOS - 1D", sym: "PESOS - 1D", val: 51.25, type: "rate" },
-                    { label: "PESOS - 3D", sym: "PESOS - 3D", val: 51.50, type: "rate" },
-                    { label: "PESOS - 7D", sym: "PESOS - 7D", val: 52.80, type: "rate" },
-                    { label: "PESOS - 30D", sym: "PESOS - 30D", val: 55.10, type: "rate" },
+                    { label: "PESOS - 1D", sym: "PESOS - 1D", val: 30.25, type: "rate" },
+                    { label: "PESOS - 3D", sym: "PESOS - 3D", val: 30.50, type: "rate" },
+                    { label: "PESOS - 7D", sym: "PESOS - 7D", val: 31.80, type: "rate" },
+                    { label: "PESOS - 30D", sym: "PESOS - 30D", val: 34.10, type: "rate" },
                     { label: "DOLARES - 1D", sym: "DOLARES - 1D", val: 2.15, type: "rate" },
                     { label: "DOLARES - 3D", sym: "DOLARES - 3D", val: 2.30, type: "rate" },
                     { label: "DOLARES - 7D", sym: "DOLARES - 7D", val: 2.45, type: "rate" },
@@ -770,7 +1005,8 @@ export default function App() {
                 },
                 {
                   title: "ACCIONES (BYMA)",
-                  flex: "w-[32%]",
+                  flex: "w-[29%]",
+                  priceMin: "min-w-[68px]",
                   isLast: true,
                   items: [
                     { label: "BMA", sym: "BMA - 48hs", val: 13300.00, type: "price" },
@@ -785,62 +1021,124 @@ export default function App() {
                 }
               ];
 
-              // Para llenar todo el alto de 160px con renglones más grandes:
-              // Forzamos 8 renglones (8 * 20px = 160px)
               const maxItems = 8;
 
               return (
-                <div className="w-full h-full flex flex-col text-[11px] font-mono leading-none bg-black">
-                  {Array.from({ length: maxItems }).map((_, rIdx) => {
-                    // Alternating Row Color Match Bloomberg: Oscuro más profundo y Negro
-                    const rowBgColor = rIdx % 2 === 0 ? '#161616' : '#000000';
+                <div className="w-full h-full flex flex-col text-[12px] font-mono leading-none">
 
-                    return (
-                      <div key={rIdx} className="flex w-full flex-1 items-center" style={{ backgroundColor: rowBgColor }}>
-                        {columns.map((col, cIdx) => {
-                          const item = col.items[rIdx];
-                          if (!item || !item.label) {
-                            // Espaciador visible integrado si no hay data para esta fila de esta columna
-                            return <div key={cIdx} className={`${col.flex} flex px-2 h-full items-center shrink-0 ${!col.isLast ? 'border-r border-[#333]' : ''}`}></div>;
-                          }
-
-                          const flashKey = `rofex_${item.sym}`;
-                          const flash = flashMap[flashKey];
-                          const hasVal = item.val !== null;
-
-                          const hash = item.label.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-                          const fakeVar = ((hash % 800) / 100) - 4; // Entre -4.00% y +4.00%
-                          const isPos = fakeVar >= 0;
-
-                          return (
-                            <div
-                              key={cIdx}
-                              className={`${col.flex} flex justify-between items-center h-full pl-2 ${!col.isLast ? 'border-r border-[#333]' : ''} ${flash === 'up' ? 'flash-up' : flash === 'down' ? 'flash-down' : ''}`}
-                            >
-                              {/* Ticker in Orange (truncates to avoid breaking layout) */}
-                              <span className="text-[#ffaa00] truncate mr-1 min-w-[30px] transform-gpu antialiased">{item.label}</span>
-                              <div className={`flex items-center h-full shrink-0 whitespace-nowrap transform-gpu antialiased ${cIdx > 0 ? 'pr-3' : 'pr-1'}`}>
-                                {/* Value in White/Amber */}
-                                <span className={hasVal ? "text-[#ffaa00] mr-2" : "text-white mr-2"}>
-                                  {hasVal
-                                    ? (item.type === 'price' ? fmtPrice(item.val) : fmtRate(item.val))
-                                    : '-.--'}
-                                </span>
-                                {/* Badge Variación Diaria (Fake temporal) */}
-                                {hasVal ? (
-                                  <div className={`h-full flex items-center font-bold text-[10px] transform-gpu antialiased ${isPos ? 'text-[#00ff00]' : 'text-[#ff0000]'}`}>
-                                    {isPos ? '+' : ''}{fakeVar.toFixed(2)}%
-                                  </div>
-                                ) : (
-                                  <div className="h-full w-[36px]"></div>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
+                  {/* Títulos de columnas */}
+                  <div className="flex w-full border-b border-white/[0.05] shrink-0">
+                    {columns.map((col, cIdx) => (
+                      <div key={cIdx} className={`${col.flex} px-2 py-[3px] ${!col.isLast ? 'border-r border-white/[0.07]' : ''}`}>
+                        <span className="text-[8.5px] tracking-[0.12em] text-white/20 uppercase font-semibold font-sans">{col.title}</span>
                       </div>
-                    );
-                  })}
+                    ))}
+                  </div>
+
+                  {/* Filas de datos */}
+                  <div className="flex-1 flex flex-col min-h-0">
+                    {Array.from({ length: maxItems }).map((_, rIdx) => {
+                      const rowBgColor = rIdx % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent';
+
+                      return (
+                        <div key={rIdx} className="flex w-full flex-1 items-center" style={{ backgroundColor: rowBgColor }}>
+                          {columns.map((col, cIdx) => {
+                            const item = col.items[rIdx];
+                            if (!item || !item.label) {
+                              return <div key={cIdx} className={`${col.flex} flex px-2 h-full items-center shrink-0 ${!col.isLast ? 'border-r border-white/[0.07]' : ''}`}></div>;
+                            }
+
+                            const mockSymbolsArray = [
+                              "DLR/FEB26", "DLR/MAR26", "DLR/ABR26", "DLR/MAY26",
+                              "DLR/JUN26", "DLR/JUL26", "DLR/AGO26", "DLR/SEP26",
+                              "BMA - 48hs", "BYMA - 48hs", "CEPU - 48hs", "GGAL - 48hs",
+                              "PAMP - 48hs", "YPFD - 48hs", "TECO2 - 48hs", "LOMA - 48hs",
+                              "PESOS - 1D", "PESOS - 3D", "PESOS - 7D", "PESOS - 30D",
+                              "DOLARES - 1D", "DOLARES - 3D", "DOLARES - 7D", "DOLARES - 30D"
+                            ];
+
+                            const initialValuesMap = {
+                              "DLR/FEB26": 1418.00, "DLR/MAR26": 1432.00, "DLR/ABR26": 1446.00, "DLR/MAY26": 1456.00,
+                              "DLR/JUN26": 1464.00, "DLR/JUL26": 1473.00, "DLR/AGO26": 1482.00, "DLR/SEP26": 1491.00,
+                              "BMA - 48hs": 13300.00, "BYMA - 48hs": 301.25, "CEPU - 48hs": 301.25, "GGAL - 48hs": 6850.00,
+                              "PAMP - 48hs": 4815.00, "YPFD - 48hs": 55950.00, "TECO2 - 48hs": 3285.00, "LOMA - 48hs": 3287.50,
+                              "PESOS - 1D": 30.25, "PESOS - 3D": 30.50, "PESOS - 7D": 31.80, "PESOS - 30D": 34.10,
+                              "DOLARES - 1D": 2.15, "DOLARES - 3D": 2.30, "DOLARES - 7D": 2.45, "DOLARES - 30D": 3.10
+                            };
+
+                            const flashKey = `rofex_${item.sym}`;
+                            const flash = flashMap[flashKey];
+                            const symItem = mockSymbolsArray.includes(item.sym) ? item.sym : null;
+                            const hasVal = item.val !== null || safeGet(symItem) !== null;
+                            const currentVal = safeGet(item.sym) !== null ? safeGet(item.sym) : item.val;
+
+                            // Definir un precio inicial "base" para calcular una variación realista
+                            const initialVal = symItem ? initialValuesMap[symItem] : item.val;
+
+                            let fakeVar = 0;
+                            if (hasVal && currentVal && initialVal) {
+                              fakeVar = ((currentVal - initialVal) / initialVal) * 100;
+                            } else {
+                              // Fallback estático viejo si por alguna razón falla el simulador
+                              const hash = item.label.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+                              fakeVar = ((hash % 800) / 100) - 4; // Entre -4.00% y +4.00%
+                            }
+
+                            const isPos = fakeVar >= 0;
+
+                            return (
+                              <div
+                                key={cIdx}
+                                className={`${col.flex} flex justify-between items-center h-full pl-2 ${!col.isLast ? 'border-r border-white/[0.07]' : ''} ${flash === 'up' ? 'flash-up' : flash === 'down' ? 'flash-down' : ''}`}
+                              >
+                                {/* Ticker label */}
+                                <span className="text-zinc-500 truncate mr-1 min-w-[30px] transform-gpu antialiased tracking-wide">{item.label}</span>
+                                <div className={`flex items-center h-full shrink-0 whitespace-nowrap transform-gpu antialiased ${cIdx > 0 ? 'pr-2' : 'pr-1'}`}>
+                                  {/* Precio */}
+                                  <div className={`relative h-full flex items-center ${col.priceMin} justify-end overflow-hidden ${hasVal ? "text-slate-200" : "text-white/20"} mr-1`}>
+                                    <AnimatePresence mode="popLayout" initial={false}>
+                                      <motion.span
+                                        key={hasVal ? currentVal : 'empty'}
+                                        initial={{ y: flash === 'up' ? 10 : (flash === 'down' ? -10 : 0), opacity: flash ? 0 : 1, filter: flash ? 'blur(2px)' : 'blur(0px)' }}
+                                        animate={{ y: 0, opacity: 1, filter: 'blur(0px)' }}
+                                        exit={{ y: flash === 'up' ? -10 : (flash === 'down' ? 10 : 0), opacity: flash ? 0 : 1, filter: flash ? 'blur(2px)' : 'blur(0px)' }}
+                                        transition={{ duration: flash ? 0.25 : 0, ease: "easeOut" }}
+                                        className="absolute right-0 font-mono tracking-tight"
+                                      >
+                                        {hasVal
+                                          ? (item.type === 'price' ? fmtPrice(currentVal) : fmtRate(currentVal))
+                                          : '-.--'}
+                                      </motion.span>
+                                    </AnimatePresence>
+                                  </div>
+
+                                  {/* Badge variación */}
+                                  {hasVal ? (
+                                    <div className={`relative h-full w-[42px] flex items-center justify-end font-bold text-[11px] transform-gpu antialiased overflow-hidden ${isPos ? 'text-emerald-400' : 'text-red-400'}`}>
+                                      <AnimatePresence mode="popLayout" initial={false}>
+                                        <motion.div
+                                          key={fakeVar}
+                                          initial={{ y: flash === 'up' ? 8 : (flash === 'down' ? -8 : 0), opacity: flash ? 0 : 1, filter: flash ? 'blur(2px)' : 'blur(0px)' }}
+                                          animate={{ y: 0, opacity: 1, filter: 'blur(0px)' }}
+                                          exit={{ y: flash === 'up' ? -8 : (flash === 'down' ? 8 : 0), opacity: flash ? 0 : 1, filter: flash ? 'blur(2px)' : 'blur(0px)' }}
+                                          transition={{ duration: flash ? 0.25 : 0, ease: "easeOut" }}
+                                          className="absolute right-0"
+                                        >
+                                          {isPos ? '+' : ''}{fakeVar.toFixed(2)}%
+                                        </motion.div>
+                                      </AnimatePresence>
+                                    </div>
+                                  ) : (
+                                    <div className="h-full w-[45px]"></div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               );
             })()}
@@ -850,7 +1148,7 @@ export default function App() {
         {/* W3: NEWS — PREMIUM WIDGET (384px) */}
         <motion.div
           animate={{ y: isAiActive ? -200 : 0 }}
-          transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1] }}
+          transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
           className="w-[384px] h-[192px] border-r border-white/5 shrink-0 bg-[#070707] flex flex-col font-sans overflow-hidden relative shadow-[inset_0_0_40px_rgba(0,0,0,0.8)]"
         >
           {/* Elegante Header */}
@@ -876,12 +1174,12 @@ export default function App() {
         {/* W4: WORLD CLOCKS (576px) - 5 EN FILA HORIZONTAL */}
         <motion.div
           animate={{ y: isAiActive ? 200 : 0 }}
-          transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1] }}
-          className="w-[576px] h-full flex items-center justify-around bg-zinc-950/20 shrink-0 border-l border-gray-900 relative"
+          transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
+          className="w-[576px] h-full flex items-center justify-around px-3 bg-zinc-950/20 shrink-0 border-l border-r border-gray-900 relative"
         >
           {/* Mapa del mundo de fondo (SVG realista) */}
           <div
-            className="absolute inset-0 pointer-events-none opacity-[0.08]"
+            className="absolute inset-0 pointer-events-none opacity-[0.12]"
             style={{
               backgroundImage: 'url(/world_map.svg)',
               backgroundSize: '80% auto',
