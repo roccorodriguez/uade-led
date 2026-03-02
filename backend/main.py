@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import yfinance as yf
 import datetime
 import requests
+import pandas as pd
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 import asyncio
@@ -182,6 +183,12 @@ async def startup_event():
     # Guardamos el loop para que pyRofex pueda encolar corrutinas (broadcast)
     app.state.loop = asyncio.get_running_loop()
     
+    # Iniciar scraper periódico de Top Movers (cada 20 min)
+    asyncio.create_task(movers_refresh_loop())
+
+    # Iniciar scraper diario del Calendario Económico (investing.com)
+    asyncio.create_task(econ_calendar_refresh_loop())
+
     # Iniciar WebSocket de PyRofex
     try:
         pyRofex.init_websocket_connection(
@@ -225,6 +232,9 @@ def get_yahoo_session():
 
 # --- CACHÉ TTL PARA DATOS DE EMPRESA ---
 _company_cache = {}
+
+# --- CACHÉ CALENDARIO ECONÓMICO (1 scrape por día) ---
+_econ_calendar = {"events": [], "date": None}
 COMPANY_CACHE_TTL = 600  # 10 minutos
 
 def fetch_ticker_data(t):
@@ -233,20 +243,23 @@ def fetch_ticker_data(t):
         hist = asset.history(period="2d")
         if len(hist) < 2:
             price = asset.info.get('regularMarketPrice', 0)
-            change = 0.0
+            change_pct = 0.0
+            change_abs = 0.0
         else:
             last_close = hist['Close'].iloc[-2]
             current_price = hist['Close'].iloc[-1]
             price = current_price
-            change = ((current_price - last_close) / last_close) * 100
+            change_abs = current_price - last_close
+            change_pct = (change_abs / last_close) * 100
         
         return {
             "symbol": t.replace("^", ""), 
             "price": f"{price:.2f}",
-            "change": f"{change:+.2f}"
+            "change": f"{change_pct:+.2f}",
+            "change_abs": f"{change_abs:+.2f}"
         }
     except:
-        return {"symbol": t.replace("^", ""), "price": "0.00", "change": "0.00"}
+        return {"symbol": t.replace("^", ""), "price": "0.00", "change": "0.00", "change_abs": "0.00"}
 
 def parse_relative_time(relative_str):
     """
@@ -531,8 +544,8 @@ async def receive_whatsapp(Body: str = Form(None), From: str = Form(None)):
 @app.get("/api/chart/{ticker}")
 def get_chart_data(ticker: str):
     try:
-        # Pedimos 1 día con intervalo de 5m para tener una línea definida
-        data = yf.download(ticker, period="1d", interval="5m")
+        # Pedimos 5 días con intervalo de 5m para tener suficientes puntos para SMAs
+        data = yf.download(ticker, period="5d", interval="5m")
         
         if data.empty:
             print(f"⚠️ No hay datos para {ticker}")
@@ -542,22 +555,35 @@ def get_chart_data(ticker: str):
         # Si las columnas son tuplas (ej: ('Close', 'AAPL')), nos quedamos con el primer elemento
         data.columns = [col[0] if isinstance(col, tuple) else col for col in data.columns]
         
+        # Calculamos las medias móviles sobre la columna Close
+        data['SMA20'] = data['Close'].rolling(window=20).mean()
+        data['SMA50'] = data['Close'].rolling(window=50).mean()
+        
         # Convertimos el índice (Datetime) a una columna para iterar
         data = data.reset_index()
         
         # Identificamos la columna de tiempo (puede ser 'Datetime' o 'Date')
         time_col = 'Datetime' if 'Datetime' in data.columns else 'Date'
         
-        # Construimos la lista asegurando milisegundos (* 1000)
-        chart_data = [
-            {
-                "time": int(row[time_col].timestamp() * 1000),
-                "value": float(row['Close'])
-            }
-            for _, row in data.iterrows()
-        ]
+        # Filtramos solo los datos del último día de trading
+        last_date = data[time_col].dt.date.iloc[-1]
+        data_today = data[data[time_col].dt.date == last_date]
         
-        print(f"✅ {ticker}: {len(chart_data)} puntos enviados.")
+        # Construimos la lista con price, volume, sma20, sma50
+        import math as _math
+        chart_data = []
+        for _, row in data_today.iterrows():
+            sma20_val = float(row['SMA20']) if not _math.isnan(row['SMA20']) else None
+            sma50_val = float(row['SMA50']) if not _math.isnan(row['SMA50']) else None
+            chart_data.append({
+                "time": int(row[time_col].timestamp() * 1000),
+                "value": float(row['Close']),
+                "volume": int(row['Volume']),
+                "sma20": sma20_val,
+                "sma50": sma50_val,
+            })
+        
+        print(f"✅ {ticker}: {len(chart_data)} puntos enviados (con SMA20/SMA50/Volume).")
         return chart_data
 
     except Exception as e:
@@ -589,6 +615,263 @@ async def get_prices():
         "global": global_results,
         "rofex": ROFEX_STATE
     }
+
+# 3. Endpoint para Heatmap (Widget 4 Alternativo)
+@app.get("/api/market-heatmap")
+async def get_market_heatmap():
+    commodities = ["CL=F", "GC=F", "SI=F", "HG=F", "ZS=F"] # WTI, Gold, Silver, Copper, Soybeans
+    indices = ["^GSPC", "^DJI", "^IXIC", "^VIX", "^MERV"]  # S&P500, Dow, NASDAQ, VIX, Merval
+    
+    # Mapeo de nombres limpios para la UI
+    name_map = {
+        "CL=F": "WTI CRUDE", "GC=F": "GOLD", "SI=F": "SILVER", "HG=F": "COPPER", "ZS=F": "SOYBEANS",
+        "^GSPC": "S&P 500", "^DJI": "DOW JONES", "^IXIC": "NASDAQ", "^VIX": "VIX", "^MERV": "MERVAL"
+    }
+
+    # Función interna para procesar la lista en paralelo
+    def fetch_group(tickers):
+        results = []
+        for t in tickers:
+            data = fetch_ticker_data(t)
+            # Agregar el nombre limpio
+            data['name'] = name_map.get(t, data['symbol'])
+            results.append(data)
+        return results
+
+    # Fetch paralelo (Commodities y luego Índices)
+    comm_task = asyncio.to_thread(fetch_group, commodities)
+    idx_task = asyncio.to_thread(fetch_group, indices)
+    
+    comp_results, idx_results = await asyncio.gather(comm_task, idx_task)
+
+    return {
+        "commodities": comp_results,
+        "indices": idx_results
+    }
+
+# --- TOP MOVERS: caché de tickers scrapeados de Yahoo Finance ---
+# Se actualiza cada 20 minutos vía background task
+_movers_tickers = {"gainers": [], "losers": [], "last_scraped": 0}
+TOP_MOVERS_REFRESH_INTERVAL = 20 * 60  # segundos
+
+async def scrape_movers_tickers():
+    """Scrapea Yahoo Finance (screener API) para obtener top 5 gainers y losers del día.
+    Actualiza el caché global _movers_tickers."""
+    global _movers_tickers
+    session = get_yahoo_session()
+
+    def fetch_screener(scr_id):
+        url = (
+            f"https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved"
+            f"?scrIds={scr_id}&formatted=false&count=5&lang=en-US&region=US"
+        )
+        try:
+            resp = session.get(url, timeout=15)
+            if resp.status_code == 200:
+                quotes = (
+                    resp.json()
+                    .get("finance", {})
+                    .get("result", [{}])[0]
+                    .get("quotes", [])
+                )
+                return [q["symbol"] for q in quotes[:5] if q.get("symbol")]
+            print(f"⚠️ Screener {scr_id} devolvió HTTP {resp.status_code}")
+        except Exception as e:
+            print(f"⚠️ Error screener {scr_id}: {e}")
+        return []
+
+    gainers, losers = await asyncio.gather(
+        asyncio.to_thread(fetch_screener, "day_gainers"),
+        asyncio.to_thread(fetch_screener, "day_losers"),
+    )
+
+    if gainers or losers:
+        _movers_tickers = {"gainers": gainers, "losers": losers, "last_scraped": time.time()}
+        print(f"✅ Top Movers actualizados — Gainers: {gainers} | Losers: {losers}")
+    else:
+        print("⚠️ Scraping de Top Movers sin resultados, se mantiene caché anterior")
+
+async def movers_refresh_loop():
+    """Background task: refresca los tickers de Top Movers cada 20 minutos."""
+    await scrape_movers_tickers()  # ejecución inmediata al iniciar
+    while True:
+        await asyncio.sleep(TOP_MOVERS_REFRESH_INTERVAL)
+        await scrape_movers_tickers()
+
+@app.get("/api/top-movers")
+async def get_top_movers():
+    gainers_syms = _movers_tickers["gainers"]
+    losers_syms = _movers_tickers["losers"]
+
+    # Si el caché todavía está vacío (race condition al arrancar), forzamos scrape
+    if not gainers_syms and not losers_syms:
+        await scrape_movers_tickers()
+        gainers_syms = _movers_tickers["gainers"]
+        losers_syms = _movers_tickers["losers"]
+
+    if not gainers_syms and not losers_syms:
+        return {"gainers": [], "losers": []}
+
+    # Traemos precios en vivo para los 10 tickers cacheados
+    all_syms = gainers_syms + losers_syms
+    tasks = [asyncio.to_thread(fetch_ticker_data, s) for s in all_syms]
+    all_results = await asyncio.gather(*tasks)
+
+    gainers_data = list(all_results[:len(gainers_syms)])
+    losers_data = list(all_results[len(gainers_syms):])
+
+    return {"gainers": gainers_data, "losers": losers_data}
+
+
+async def scrape_econ_calendar():
+    """Scrapea investing.com para obtener los eventos económicos importantes del día.
+    Filtra por: EE.UU., Eurozona, Japón, China, Brasil y Argentina.
+    El resultado se cachea y sólo se refresca una vez por día."""
+    global _econ_calendar
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    if _econ_calendar["date"] == today_str and _econ_calendar["events"]:
+        return  # Ya tenemos datos del día de hoy
+
+    # IDs de país en investing.com: US=5, EuroZone=72, JP=35, CN=37, BR=32, AR=29
+    COUNTRY_IDS = ["5", "72", "35", "37", "32", "29"]
+
+    def do_scrape():
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/plain, */*; q=0.01",
+            "Accept-Language": "en-US,en;q=0.9",
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": "https://www.investing.com/economic-calendar/",
+            "Origin": "https://www.investing.com",
+        })
+
+        # Visitar la página principal para obtener cookies de sesión
+        try:
+            session.get("https://www.investing.com/economic-calendar/", timeout=15)
+        except Exception:
+            pass
+
+        # Pedimos la semana completa y luego filtramos client-side por fecha local.
+        # Así evitamos el problema de timezone del servidor (con currentTab=today
+        # el servidor resuelve "hoy" según su propio timezone y puede devolver ayer).
+        post_data = [("country[]", cid) for cid in COUNTRY_IDS]
+        post_data += [
+            ("currentTab", "thisWeek"),
+            ("limit_from", "0"),
+        ]
+
+        resp = session.post(
+            "https://www.investing.com/economic-calendar/Service/getCalendarFilteredData",
+            data=post_data,
+            timeout=20,
+        )
+
+        if resp.status_code != 200:
+            print(f"[WARN] investing.com HTTP {resp.status_code}")
+            return None
+
+        try:
+            html_data = resp.json().get("data", "")
+        except Exception:
+            html_data = resp.text
+
+        soup = BeautifulSoup(html_data, "html.parser")
+        events = []
+
+        # Prefijo de fecha en el formato que usa investing.com en data-event-datetime
+        today_prefix = datetime.now().strftime("%Y/%m/%d")
+
+        for row in soup.find_all("tr", class_="js-event-item"):
+            # Filtrar solo eventos del día de hoy según la fecha local del servidor
+            if not row.get("data-event-datetime", "").startswith(today_prefix):
+                continue
+            try:
+                time_el      = row.find("td", class_="time")
+                country_el   = row.find("td", class_="flagCur")
+                sentiment_el = row.find("td", class_="sentiment")
+                event_el     = row.find("td", class_="event")
+                actual_el    = row.find("td", class_="actual")
+                forecast_el  = row.find("td", class_="forecast")
+                prev_el      = row.find("td", class_="prev")
+
+                # Nombre del evento (prioridad: <a> dentro de la celda)
+                if event_el:
+                    a_tag = event_el.find("a")
+                    event_name = (a_tag.text if a_tag else event_el.text).strip()
+                else:
+                    event_name = ""
+                if not event_name:
+                    continue
+
+                # País desde el atributo title del span de bandera
+                country_name = ""
+                if country_el:
+                    span = country_el.find("span")
+                    if span:
+                        country_name = span.get("title", "").strip()
+
+                # Impacto: cantidad de íconos de toro rellenos
+                impact = 0
+                if sentiment_el:
+                    all_icons = sentiment_el.find_all("i")
+                    impact = sum(
+                        1 for ic in all_icons
+                        if "grayFullBullishIcon" in (ic.get("class") or [])
+                    )
+
+                events.append({
+                    "time":     time_el.text.strip() if time_el else "",
+                    "country":  country_name,
+                    "event":    event_name,
+                    "impact":   impact,
+                    "actual":   actual_el.text.strip() if actual_el else "",
+                    "forecast": forecast_el.text.strip() if forecast_el else "",
+                    "prev":     prev_el.text.strip() if prev_el else "",
+                })
+            except Exception:
+                continue
+
+        # Ordenar: mayor impacto primero, luego por hora
+        events.sort(key=lambda e: (-e["impact"], e.get("time", "")))
+        print(f"[OK] Calendario economico: {len(events)} eventos para {today_str}")
+        return events
+
+    try:
+        events = await asyncio.to_thread(do_scrape)
+        if events is not None:
+            _econ_calendar = {"events": events, "date": today_str}
+    except Exception as e:
+        print(f"❌ Error scrapeando investing.com: {e}")
+
+
+async def econ_calendar_refresh_loop():
+    """Background task: scrape una vez al día, revisando cada hora si cambió la fecha."""
+    await scrape_econ_calendar()
+    while True:
+        await asyncio.sleep(3600)  # revisa cada hora
+        await scrape_econ_calendar()
+
+
+@app.get("/api/econ-calendar")
+async def get_econ_calendar():
+    if not _econ_calendar["date"]:
+        await scrape_econ_calendar()
+    return {"events": _econ_calendar["events"], "date": _econ_calendar["date"]}
+
+
+@app.get("/api/econ-calendar/refresh")
+async def force_econ_calendar_refresh():
+    """Fuerza un re-scrape ignorando el caché (útil para debug)."""
+    global _econ_calendar
+    _econ_calendar = {"events": [], "date": None}
+    await scrape_econ_calendar()
+    return {"ok": True, "events": len(_econ_calendar["events"]), "date": _econ_calendar["date"]}
+
 
 @app.get("/api/market-news")
 def get_latest_scraping():

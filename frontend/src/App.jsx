@@ -94,7 +94,10 @@ const PremiumNewsFeed = ({ news, activeIdx }) => {
 // --- WIDGET 1: GRÁFICO DINÁMICO UADE (ULTRA-CLEAN WHITE) ---
 const FinancialChart = ({ ticker, onCycleComplete }) => {
   const [series, setSeries] = useState([
-    { name: ticker, type: 'area', data: [] }
+    { name: ticker, type: 'area', data: [] },
+    { name: 'SMA 20', type: 'line', data: [] },
+    { name: 'SMA 50', type: 'line', data: [] },
+    { name: 'Volume', type: 'bar', data: [] },
   ]);
   const [scalesOpacity, setScalesOpacity] = useState(0);
   const [lineClip, setLineClip] = useState(0);
@@ -112,8 +115,8 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
       setPriceInfo(null);
 
       try {
-        // Timeout de 8s para evitar que el fetch se cuelgue indefinidamente
-        const fetchTimeout = setTimeout(() => controller.abort(), 8000);
+        // Timeout de 12s para dar margen a la descarga de 5 días
+        const fetchTimeout = setTimeout(() => controller.abort(), 12000);
         const res = await fetch(`${API_BASE}/api/chart/${ticker}`, { signal: controller.signal });
         clearTimeout(fetchTimeout);
         const data = await res.json();
@@ -122,14 +125,19 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
 
         if (data && data.length > 0) {
           setSeries([
-            { name: ticker, type: 'area', data: data.map(d => [d.time, d.value]) }
+            { name: ticker, type: 'area', data: data.map(d => [d.time, d.value]) },
+            { name: 'SMA 20', type: 'line', data: data.filter(d => d.sma20 != null).map(d => [d.time, d.sma20]) },
+            { name: 'SMA 50', type: 'line', data: data.filter(d => d.sma50 != null).map(d => [d.time, d.sma50]) },
+            { name: 'Volume', type: 'bar', data: data.map(d => [d.time, d.volume || 0]) },
           ]);
 
           // Calcular precio y variación
           const lastPrice = data[data.length - 1].value;
           const firstPrice = data[0].value;
           const pctChange = ((lastPrice - firstPrice) / firstPrice * 100);
-          if (!cancelled) setPriceInfo({ price: lastPrice, change: pctChange });
+          const lastSma20 = data.filter(d => d.sma20 != null).slice(-1)[0]?.sma20 || null;
+          const lastSma50 = data.filter(d => d.sma50 != null).slice(-1)[0]?.sma50 || null;
+          if (!cancelled) setPriceInfo({ price: lastPrice, change: pctChange, sma20: lastSma20, sma50: lastSma50 });
 
           // 1. ENTRADA: Fundido de escalas, luego barrido de línea
           await new Promise(r => setTimeout(r, 500));
@@ -184,19 +192,24 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
     };
   }, [ticker]);
 
-  // Bloomberg Terminal Style: exact replica
+  // Bloomberg Terminal Style con SMAs + Volume
   const options = {
     chart: {
-      type: 'area',
+      type: 'line',
       background: 'transparent',
       toolbar: { show: false },
       animations: { enabled: false },
       fontFamily: '"Courier New", Courier, monospace',
       offsetX: -8,
     },
-    stroke: { curve: 'straight', width: [1.5], colors: ['#87CEEB'] },
+    stroke: {
+      curve: 'straight',
+      width: [1.5, 1, 1, 0],
+      colors: ['#87CEEB', '#FFD700', '#00E5FF', 'transparent'],
+      dashArray: [0, 0, 0, 0],
+    },
     fill: {
-      type: ['gradient'],
+      type: ['gradient', 'solid', 'solid', 'solid'],
       gradient: {
         shadeIntensity: 1,
         opacityFrom: 0.9,
@@ -206,9 +219,10 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
           [{ offset: 0, color: '#1e3a8a', opacity: 0.8 }, { offset: 100, color: '#000000', opacity: 0.2 }]
         ]
       },
-      opacity: [1],
-      colors: ['#1e3a8a']
+      opacity: [1, 1, 1, 0.35],
+      colors: ['#1e3a8a', '#FFD700', '#00E5FF', '#555555']
     },
+    colors: ['#87CEEB', '#FFD700', '#00E5FF', '#555555'],
     grid: {
       show: true,
       borderColor: '#333333',
@@ -221,7 +235,7 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
     xaxis: {
       type: 'datetime',
       labels: { show: true, style: { colors: '#cccccc', fontSize: '9px', fontWeight: 'bold' }, datetimeUTC: false, offsetY: -5 },
-      axisBorder: { show: false }, // Oculta la línea divisoria del eje X
+      axisBorder: { show: false },
       axisTicks: { show: true, color: '#666666' },
       tooltip: { enabled: false }
     },
@@ -231,9 +245,28 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
         labels: { show: true, style: { colors: '#cccccc', fontSize: '10px', fontWeight: 'bold' }, formatter: v => v.toFixed(2), offsetX: -10 },
         opposite: true,
         axisBorder: { show: true, color: '#666666' },
-        axisTicks: { show: true, color: '#666666' }
+        axisTicks: { show: true, color: '#666666' },
+      },
+      {
+        seriesName: ticker,
+        show: false,
+      },
+      {
+        seriesName: ticker,
+        show: false,
+      },
+      {
+        seriesName: 'Volume',
+        opposite: false,
+        show: false,
+        max: (max) => max * 4,
       }
     ],
+    plotOptions: {
+      bar: {
+        columnWidth: '80%',
+      }
+    },
     annotations: {
       yaxis: priceInfo ? [{
         y: priceInfo.price,
@@ -278,13 +311,15 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
           /* Grid stays static, only series fade/clip away */
           .apexcharts-series-group, 
           .apexcharts-area-series, 
+          .apexcharts-line-series,
           .apexcharts-bar-series {
             transition: clip-path 1500ms ease-in-out !important;
             clip-path: inset(0 ${100 - lineClip}% 0 0);
           }
-        `}</style>
+        `}
+        </style>
 
-        {/* DAY SESSION INFO BOX (LAST PRICE Y VARIACIÓN) */}
+        {/* DAY SESSION INFO BOX (LAST PRICE, VARIACIÓN, SMAs) */}
         <div className="absolute top-[8px] left-[8px] z-10 border border-[#888] rounded-sm bg-black/70 text-white text-[8px] p-1 w-36 font-bold shadow-md">
           <div className="text-center mb-[2px] tracking-wide text-[#bbbbbb] pb-[2px] border-b border-[#333]">Day Session (<span className="text-white text-[10px]">{ticker}</span>)</div>
           <div className="flex justify-between items-center pt-[2px]">
@@ -297,14 +332,23 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
               {priceInfo ? `${priceInfo.change > 0 ? '+' : ''}${priceInfo.change.toFixed(2)}%` : '-'}
             </span>
           </div>
+          <div className="flex justify-between items-center mt-[1px]">
+            <span className="flex items-center gap-[3px]"><span className="w-1.5 h-1.5 bg-[#FFD700] inline-block"></span>SMA 20</span>
+            <span className="text-[#FFD700]">{priceInfo?.sma20 ? priceInfo.sma20.toFixed(2) : '-'}</span>
+          </div>
+          <div className="flex justify-between items-center mt-[1px]">
+            <span className="flex items-center gap-[3px]"><span className="w-1.5 h-1.5 bg-[#00E5FF] inline-block"></span>SMA 50</span>
+            <span className="text-[#00E5FF]">{priceInfo?.sma50 ? priceInfo.sma50.toFixed(2) : '-'}</span>
+          </div>
         </div>
 
         {/* GRÁFICO APEXCHARTS */}
-        <Chart options={options} series={series} type="area" height="100%" width="100%" />
+        <Chart options={options} series={series} type="line" height="100%" width="100%" />
       </div>
     </div>
   );
 };
+
 
 const MarqueeHeadline = ({ text, maxDuration, id }) => {
   const containerRef = useRef(null);
@@ -591,9 +635,387 @@ const CompanyDataDisplay = ({ data, active }) => {
   );
 };
 
+// --- WIDGET 3 ALTERNATIVO: CALENDARIO ECONÓMICO (384px) ---
+const COUNTRY_META = {
+  'United States': { flag: '🇺🇸', code: 'US' },
+  'Euro Zone':     { flag: '🇪🇺', code: 'EU' },
+  'Eurozone':      { flag: '🇪🇺', code: 'EU' },
+  'Japan':         { flag: '🇯🇵', code: 'JP' },
+  'China':         { flag: '🇨🇳', code: 'CN' },
+  'Brazil':        { flag: '🇧🇷', code: 'BR' },
+  'Argentina':     { flag: '🇦🇷', code: 'AR' },
+};
+
+const EconCalendar = () => {
+  const [events, setEvents] = useState([]);
+  const [page, setPage] = useState(0);
+  const [now, setNow] = useState(new Date());
+  const ITEMS = 5;
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/econ-calendar`);
+        const data = await res.json();
+        if (Array.isArray(data.events)) setEvents(data.events);
+      } catch (e) { /* silent */ }
+    };
+    load();
+    const iv = setInterval(load, 3600000); // refresca cada hora
+    return () => clearInterval(iv);
+  }, []);
+
+  // Actualiza el reloj cada minuto para recalcular qué eventos ya ocurrieron
+  useEffect(() => {
+    const iv = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const isPast = (timeStr) => {
+    if (!timeStr) return false;
+    const [h, m] = timeStr.split(':').map(Number);
+    if (isNaN(h) || isNaN(m)) return false;
+    return h * 60 + m < now.getHours() * 60 + now.getMinutes();
+  };
+
+  const totalPages = Math.max(1, Math.ceil(events.length / ITEMS));
+  useEffect(() => {
+    if (events.length <= ITEMS) return;
+    const iv = setInterval(() => setPage(p => (p + 1) % totalPages), 8000);
+    return () => clearInterval(iv);
+  }, [events.length, totalPages]);
+
+  const pageEvents = events.slice(page * ITEMS, (page + 1) * ITEMS);
+
+  if (events.length === 0) {
+    return (
+      <div className="w-full h-full flex items-center justify-center">
+        <div className="flex flex-col items-center gap-2">
+          <svg className="w-4 h-4 text-zinc-700 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+          </svg>
+          <span className="text-[9px] uppercase tracking-[0.2em] text-white/20">Cargando eventos...</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full h-full bg-[#070707] overflow-hidden">
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={page}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.35 }}
+          className="w-full h-full flex flex-col"
+        >
+          {pageEvents.map((ev, i) => {
+            const cm = COUNTRY_META[ev.country] || {
+              flag: '🌐',
+              code: (ev.country || '??').slice(0, 2).toUpperCase(),
+            };
+            const impactColor =
+              ev.impact >= 3 ? '#f87171' :
+              ev.impact === 2 ? '#fbbf24' : '#3f3f46';
+            const past = isPast(ev.time);
+
+            return (
+              <div
+                key={i}
+                className="flex-1 flex items-center px-2 border-b border-white/[0.04] last:border-b-0 gap-1.5 min-h-0"
+                style={{ backgroundColor: past ? 'rgba(248,113,113,0.08)' : 'transparent' }}
+              >
+                {/* Hora */}
+                <span className={`text-[14px] font-mono w-[40px] shrink-0 tabular-nums ${past ? 'text-red-400/60 line-through' : 'text-zinc-400'}`}>
+                  {ev.time}
+                </span>
+
+                {/* Bandera */}
+                <span className="text-[18px] shrink-0 leading-none -translate-y-[2px]">{cm.flag}</span>
+
+                {/* Dot de impacto */}
+                <div
+                  className="w-[7px] h-[7px] rounded-full shrink-0"
+                  style={{ backgroundColor: impactColor }}
+                />
+
+                {/* Nombre del evento */}
+                <span className="text-[14px] flex-1 truncate min-w-0 leading-tight" style={{ color: '#c0c0c0' }}>
+                  {ev.event}
+                </span>
+
+                {/* Valor: solo se renderiza si hay dato, para no robar espacio */}
+                {(ev.actual || ev.forecast) && (
+                  <div className="shrink-0 text-right">
+                    {ev.actual
+                      ? <span className="text-[13px] font-mono font-bold text-emerald-400">{ev.actual}</span>
+                      : <span className="text-[13px] font-mono text-zinc-600">{ev.forecast}</span>
+                    }
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </motion.div>
+      </AnimatePresence>
+
+      {/* Indicador de página */}
+      {totalPages > 1 && (
+        <div className="absolute bottom-[2px] right-3 flex gap-1">
+          {Array.from({ length: totalPages }).map((_, pi) => (
+            <div
+              key={pi}
+              className="w-1 h-1 rounded-full transition-all duration-300"
+              style={{ backgroundColor: pi === page ? '#52525b' : '#27272a' }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// --- WIDGET 2 ALTERNATIVO: TOP MOVERS (576px) ---
+const TopMovers = () => {
+  const [data, setData] = useState({ gainers: [], losers: [] });
+
+  useEffect(() => {
+    let active = true;
+    const fetchMovers = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/top-movers`);
+        const result = await res.json();
+        if (active) setData(result);
+      } catch (e) {
+        console.error("Top Movers fetch error", e);
+      }
+    };
+    fetchMovers();
+    const interval = setInterval(fetchMovers, 15000); // 15s refresh
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, []);
+
+  // Calcular max cambios para magnitud relativa
+  const maxGain = data.gainers.length > 0 ? Math.max(...data.gainers.map(g => parseFloat(g.change))) : 1;
+  const maxLoss = data.losers.length > 0 ? Math.max(...data.losers.map(l => Math.abs(parseFloat(l.change)))) : 1;
+
+  const renderBar = (item, isGain, maxVal) => {
+    if (!item) return <div className="flex-1 flex items-center px-3" />;
+
+    const change = Math.abs(parseFloat(item.change));
+    // Calculamos el % de la barra relativo al máximo de ese lado (min 5% para que se vea algo)
+    const pct = Math.max(2, (change / (maxVal || 1)) * 100);
+
+    // Tonalidades idénticas al Widget 4, pero con un color de fondo más denso para que "llene" más
+    const color = isGain ? '#34d399' : '#f87171';
+    const bgOpacity = isGain ? 'rgba(52,211,153,0.18)' : 'rgba(248,113,113,0.18)';
+
+    return (
+      <div key={item.symbol} className="flex-1 flex flex-col justify-center px-4 relative overflow-hidden group hover:bg-white/[0.04] transition-colors duration-300">
+        {/* Fondo de la barra restaurado al 100% del ancho del recuadro */}
+        <div
+          className="absolute top-[2px] bottom-[2px] left-0 transition-all duration-1000 ease-out rounded-r-sm shadow-sm"
+          style={{
+            width: `${pct}%`,
+            backgroundColor: bgOpacity,
+            borderRight: `2px solid ${color}`
+          }}
+        />
+
+        {/* Contenido (Z-10 para estar sobre la barra) */}
+        <div className="relative z-10 flex justify-between items-center w-full h-full">
+          <div className="flex flex-col z-10">
+            <span className="text-[14px] font-bold text-[#e2e8f0] tracking-wide">{item.symbol}</span>
+          </div>
+
+          {/* Capa de difuminado (gradient) atrás del texto para que el borde brillante nunca corte visualmente los números */}
+          <div className="absolute right-[-16px] pl-16 pr-4 h-full flex items-center gap-2 bg-gradient-to-l from-[#070707] via-[#070707]/90 to-transparent z-20">
+            <span className="text-[12px] font-mono font-semibold drop-shadow-md" style={{ color: color }}>
+              {item.change}%
+            </span>
+            <span className="text-[11px] font-mono text-zinc-500">
+              ${parseFloat(item.price).toFixed(2)}
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="w-full h-full flex bg-[#070707] font-sans shadow-[inset_0_0_40px_rgba(0,0,0,0.8)] border-r border-[#111]">
+      {/* Columna Izquierda: Gainers */}
+      <div className="flex-1 flex flex-col border-r border-[#1f2329]/50">
+        <div className="h-[24px] flex items-center px-4 border-b border-white/[0.05] bg-gradient-to-b from-white/[0.03] to-transparent">
+          <span className="text-[9px] tracking-[0.15em] font-bold uppercase opacity-75" style={{ color: '#34d399' }}>Top Gainers</span>
+        </div>
+        <div className="flex-1 flex flex-col">
+          {data.gainers.length > 0
+            ? data.gainers.map((item, i) => (
+              <div key={`g-${i}`} className={`flex-1 flex border-b border-white/[0.02] ${i === data.gainers.length - 1 ? 'border-b-0' : ''}`}>
+                {renderBar(item, true, maxGain)}
+              </div>
+            ))
+            : <div className="flex-1 flex items-center justify-center text-[10px] text-zinc-600 uppercase tracking-widest animate-pulse">Scanning...</div>
+          }
+        </div>
+      </div>
+
+      {/* Columna Derecha: Losers */}
+      <div className="flex-1 flex flex-col">
+        <div className="h-[24px] flex items-center px-4 border-b border-white/[0.05] bg-gradient-to-b from-white/[0.03] to-transparent">
+          <span className="text-[9px] tracking-[0.15em] font-bold uppercase opacity-75" style={{ color: '#f87171' }}>Top Losers</span>
+        </div>
+        <div className="flex-1 flex flex-col">
+          {data.losers.length > 0
+            ? data.losers.map((item, i) => (
+              <div key={`l-${i}`} className={`flex-1 flex border-b border-white/[0.02] ${i === data.losers.length - 1 ? 'border-b-0' : ''}`}>
+                {renderBar(item, false, maxLoss)}
+              </div>
+            ))
+            : <div className="flex-1 flex items-center justify-center text-[10px] text-zinc-600 uppercase tracking-widest animate-pulse">Scanning...</div>
+          }
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- WIDGET 4 ALTERNATIVO: MARKET HEATMAP (576px) ---
+const MarketHeatmap = () => {
+  const [data, setData] = useState({ commodities: [], indices: [] });
+  const [flashMap, setFlashMap] = useState({});
+
+  useEffect(() => {
+    let active = true;
+    const fetchHeatmap = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/market-heatmap`);
+        const result = await res.json();
+
+        if (active) {
+          setData(prev => {
+            // Check for flashes
+            const newFlash = { ...flashMap };
+
+            const checkFlashes = (newItems, oldItems, prefix) => {
+              if (!oldItems) return;
+              newItems.forEach((item, i) => {
+                const oldItem = oldItems[i];
+                if (oldItem && item.price !== oldItem.price) {
+                  const direction = parseFloat(item.price) > parseFloat(oldItem.price) ? 'up' : 'down';
+                  const key = `${prefix}_${item.symbol}`;
+                  newFlash[key] = direction;
+
+                  // Clear flash after 800ms
+                  setTimeout(() => {
+                    setFlashMap(current => {
+                      const copy = { ...current };
+                      delete copy[key];
+                      return copy;
+                    });
+                  }, 800);
+                }
+              });
+            };
+
+            checkFlashes(result.commodities, prev.commodities, 'comm');
+            checkFlashes(result.indices, prev.indices, 'idx');
+
+            if (Object.keys(newFlash).length > Object.keys(flashMap).length) {
+              setFlashMap(newFlash);
+            }
+
+            return result;
+          });
+        }
+      } catch (e) {
+        console.error("Heatmap fetch error", e);
+      }
+    };
+
+    fetchHeatmap();
+    const interval = setInterval(fetchHeatmap, 5000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, []);
+
+  const renderCell = (item, prefix) => {
+    // Elegant cell backgrounds: Deep dark like Widget 2
+    const bgColor = '#0b0c10';
+
+    if (!item) return <div className="flex-1" style={{ backgroundColor: bgColor }} />;
+
+    const changePct = parseFloat(item.change) || 0;
+    const changeAbs = parseFloat(item.change_abs || '0');
+    const isPos = changePct >= 0;
+
+    // Professional green/red matching Widget 2 (emerald-400 / red-400)
+    const valColor = isPos ? '#34d399' : '#f87171';
+
+    const flash = flashMap[`${prefix}_${item.symbol}`];
+
+    return (
+      <div
+        key={item.symbol}
+        className={`flex-1 flex flex-col justify-between p-2 relative overflow-hidden transition-all duration-300 ${flash === 'up' ? 'ring-1 ring-inset ring-[#34d399] z-10 brightness-125' : flash === 'down' ? 'ring-1 ring-inset ring-[#f87171] z-10 brightness-125' : ''}`}
+        style={{ backgroundColor: bgColor }}
+      >
+        {/* Top: Name */}
+        <div className="w-full text-left">
+          <span className="text-[11px] font-bold tracking-wider text-[#cbd5e1] uppercase line-clamp-1 leading-tight">
+            {item.name}
+          </span>
+        </div>
+
+        {/* Bottom: Price and Changes */}
+        <div className="w-full flex flex-col items-end justify-end mt-1">
+          <span className="text-[15px] font-mono text-right font-bold leading-none mb-1 tracking-tight text-[#e2e8f0]">
+            {parseFloat(item.price).toFixed(2)}
+          </span>
+          <div className="flex flex-col items-end gap-0.5">
+            <span className="text-[11px] font-mono font-bold leading-none" style={{ color: valColor }}>
+              {isPos ? '+' : ''}{changePct.toFixed(2)}%
+            </span>
+            <span className="text-[10px] font-mono font-medium leading-none opacity-80" style={{ color: valColor }}>
+              {isPos ? '+' : ''}{changeAbs.toFixed(2)}
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="w-full h-full flex flex-col bg-[#1f2329] gap-[1px] font-sans shadow-[inset_0_0_20px_rgba(0,0,0,1)]">
+      {/* Fila 1: Commodities */}
+      <div className="flex-1 flex w-full gap-[1px]">
+        {data.commodities.length > 0 ? data.commodities.map((item) => renderCell(item, 'comm')) : Array(5).fill(0).map((_, i) => renderCell(null, 'comm'))}
+      </div>
+      {/* Fila 2: Indices */}
+      <div className="flex-1 flex w-full gap-[1px]">
+        {data.indices.length > 0 ? data.indices.map((item) => renderCell(item, 'idx')) : Array(5).fill(0).map((_, i) => renderCell(null, 'idx'))}
+      </div>
+    </div>
+  );
+};
+
 // --- APP PRINCIPAL ---
 export default function App() {
+  const [currentView, setCurrentView] = useState('LOCAL');      // 'LOCAL' | 'GLOBAL' for W4
+  const [currentViewW2, setCurrentViewW2] = useState('TICKERS'); // 'TICKERS' | 'MOVERS' for W2
+  const [currentViewW3, setCurrentViewW3] = useState('NEWS');    // 'NEWS' | 'CALENDAR' for W3
+
   const [prices, setPrices] = useState([]);
+
   const [rofexPrices, setRofexPrices] = useState({});
   const [news, setNews] = useState([]);
   const [flashMap, setFlashMap] = useState({});
@@ -924,275 +1346,412 @@ export default function App() {
   return (
     <div className="flex flex-col bg-black overflow-hidden h-screen items-center">
 
-      {/* INTERFAZ DE ANCHO FIJO: 2048px totales */}
-      <div className="w-[2048px] h-[192px] bg-black text-white flex overflow-hidden font-mono select-none relative shrink-0">
+      <div className="w-[2048px] relative">
+        {/* INTERFAZ DE ANCHO FIJO: 2048px totales */}
+        <div className="w-full h-[192px] bg-black text-white flex overflow-hidden font-mono select-none relative shrink-0">
 
 
 
-        <AnimatePresence>
-          {isAiActive && <CompanyDataDisplay data={companyData} active={isAiActive} />}
-        </AnimatePresence>
-
-        {/* W1: CHART (512px) */}
-        <motion.div
-          animate={{ y: isAiActive ? -200 : 0 }}
-          transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
-          className="w-[512px] h-full border-r border-[#333] relative shrink-0 overflow-hidden bg-black"
-        >
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={typeof idx !== 'undefined' ? idx : 'chart'}
-              initial={{ opacity: 0, filter: 'blur(3px)' }}
-              animate={{ opacity: 1, filter: 'blur(0px)' }}
-              exit={{ opacity: 0, filter: 'blur(3px)' }}
-              transition={{ duration: 0.6, ease: "easeInOut" }}
-              className="absolute inset-0 w-full h-full"
-            >
-              <FinancialChart
-                ticker={typeof TICKERS_ROTATION !== 'undefined' ? TICKERS_ROTATION[idx] : 'SPY'}
-                onCycleComplete={() => setIdx(i => (i + 1) % TICKERS_ROTATION.length)}
-              />
-            </motion.div>
+          <AnimatePresence>
+            {isAiActive && <CompanyDataDisplay data={companyData} active={isAiActive} />}
           </AnimatePresence>
-        </motion.div>
 
-        {/* W2: MARKET WATCH (576px) */}
-        <motion.div
-          animate={{ y: isAiActive ? 200 : 0 }}
-          transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
-          className="w-[576px] h-full border-r border-white/5 shrink-0 bg-[#070707] flex flex-col shadow-[inset_0_0_40px_rgba(0,0,0,0.8)]">
+          {/* W1: CHART (512px) */}
+          <motion.div
+            animate={{ y: isAiActive ? -200 : 0 }}
+            transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
+            className="w-[512px] h-full border-r border-[#333] relative shrink-0 overflow-hidden bg-black"
+          >
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={typeof idx !== 'undefined' ? idx : 'chart'}
+                initial={{ opacity: 0, filter: 'blur(3px)' }}
+                animate={{ opacity: 1, filter: 'blur(0px)' }}
+                exit={{ opacity: 0, filter: 'blur(3px)' }}
+                transition={{ duration: 0.6, ease: "easeInOut" }}
+                className="absolute inset-0 w-full h-full"
+              >
+                <FinancialChart
+                  ticker={typeof TICKERS_ROTATION !== 'undefined' ? TICKERS_ROTATION[idx] : 'SPY'}
+                  onCycleComplete={() => setIdx(i => (i + 1) % TICKERS_ROTATION.length)}
+                />
+              </motion.div>
+            </AnimatePresence>
+          </motion.div>
 
-          <div className="flex w-full h-full">
-            {(() => {
-              // Helpers de formateo
-              const fmtPrice = (val) => '$' + new Intl.NumberFormat('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 2 }).format(val);
-              const fmtRate = (val) => new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val) + '%';
+          {/* W2: MARKET WATCH (576px) */}
+          <motion.div
+            animate={{ y: isAiActive ? 200 : 0 }}
+            transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
+            className="w-[576px] h-full border-r border-white/5 shrink-0 bg-[#070707] flex flex-col shadow-[inset_0_0_40px_rgba(0,0,0,0.8)]">
 
-              // Obtenemos los valores de rofex o null
-              const safeGet = (sym) => rofexPrices[sym] !== undefined ? rofexPrices[sym] : null;
+            <div className="relative w-full h-full">
+              <AnimatePresence mode="wait">
+                {currentViewW2 === 'TICKERS' ? (
+                  <motion.div
+                    key="market-watch"
+                    initial={{ y: 50, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    exit={{ y: -50, opacity: 0 }}
+                    transition={{ duration: 0.5, ease: "easeInOut" }}
+                    className="absolute inset-0 w-full h-full flex"
+                  >
+                    {(() => {
+                      // Helpers de formateo
+                      const fmtPrice = (val) => '$' + new Intl.NumberFormat('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 2 }).format(val);
+                      const fmtRate = (val) => new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val) + '%';
 
-              // Definimos las columnas
-              const columns = [
-                {
-                  title: "DÓLAR FUTURO",
-                  flex: "w-[33%]",
-                  priceMin: "min-w-[62px]",
-                  items: [
-                    { label: "DLR/FEB26", sym: "DLR/FEB26", val: safeGet("DLR/FEB26"), type: "price" },
-                    { label: "DLR/MAR26", sym: "DLR/MAR26", val: safeGet("DLR/MAR26"), type: "price" },
-                    { label: "DLR/ABR26", sym: "DLR/ABR26", val: safeGet("DLR/ABR26"), type: "price" },
-                    { label: "DLR/MAY26", sym: "DLR/MAY26", val: safeGet("DLR/MAY26"), type: "price" },
-                    { label: "DLR/JUN26", sym: "DLR/JUN26", val: safeGet("DLR/JUN26"), type: "price" },
-                    { label: "DLR/JUL26", sym: "DLR/JUL26", val: safeGet("DLR/JUL26"), type: "price" },
-                    { label: "DLR/AGO26", sym: "DLR/AGO26", val: safeGet("DLR/AGO26"), type: "price" },
-                    { label: "DLR/SEP26", sym: "DLR/SEP26", val: safeGet("DLR/SEP26"), type: "price" }
-                  ]
-                },
-                {
-                  title: "CAUCIONES (TNA)",
-                  flex: "w-[38%]",
-                  priceMin: "min-w-[50px]",
-                  items: [
-                    { label: "PESOS - 1D", sym: "PESOS - 1D", val: 30.25, type: "rate" },
-                    { label: "PESOS - 3D", sym: "PESOS - 3D", val: 30.50, type: "rate" },
-                    { label: "PESOS - 7D", sym: "PESOS - 7D", val: 31.80, type: "rate" },
-                    { label: "PESOS - 30D", sym: "PESOS - 30D", val: 34.10, type: "rate" },
-                    { label: "DOLARES - 1D", sym: "DOLARES - 1D", val: 2.15, type: "rate" },
-                    { label: "DOLARES - 3D", sym: "DOLARES - 3D", val: 2.30, type: "rate" },
-                    { label: "DOLARES - 7D", sym: "DOLARES - 7D", val: 2.45, type: "rate" },
-                    { label: "DOLARES - 30D", sym: "DOLARES - 30D", val: 3.10, type: "rate" }
-                  ]
-                },
-                {
-                  title: "ACCIONES (BYMA)",
-                  flex: "w-[29%]",
-                  priceMin: "min-w-[68px]",
-                  isLast: true,
-                  items: [
-                    { label: "BMA", sym: "BMA - 48hs", val: 13300.00, type: "price" },
-                    { label: "BYMA", sym: "BYMA - 48hs", val: 301.25, type: "price" },
-                    { label: "CEPU", sym: "CEPU - 48hs", val: 301.25, type: "price" },
-                    { label: "GGAL", sym: "GGAL - 48hs", val: 6850.00, type: "price" },
-                    { label: "PAMP", sym: "PAMP - 48hs", val: 4815.00, type: "price" },
-                    { label: "YPFD", sym: "YPFD - 48hs", val: 55950.00, type: "price" },
-                    { label: "TECO2", sym: "TECO2 - 48hs", val: 3285.00, type: "price" },
-                    { label: "LOMA", sym: "LOMA - 48hs", val: 3287.50, type: "price" }
-                  ]
-                }
-              ];
+                      // Obtenemos los valores de rofex o null
+                      const safeGet = (sym) => rofexPrices[sym] !== undefined ? rofexPrices[sym] : null;
 
-              const maxItems = 8;
+                      // Definimos las columnas
+                      const columns = [
+                        {
+                          title: "DÓLAR FUTURO",
+                          flex: "w-[33%]",
+                          priceMin: "min-w-[62px]",
+                          items: [
+                            { label: "DLR/FEB26", sym: "DLR/FEB26", val: safeGet("DLR/FEB26"), type: "price" },
+                            { label: "DLR/MAR26", sym: "DLR/MAR26", val: safeGet("DLR/MAR26"), type: "price" },
+                            { label: "DLR/ABR26", sym: "DLR/ABR26", val: safeGet("DLR/ABR26"), type: "price" },
+                            { label: "DLR/MAY26", sym: "DLR/MAY26", val: safeGet("DLR/MAY26"), type: "price" },
+                            { label: "DLR/JUN26", sym: "DLR/JUN26", val: safeGet("DLR/JUN26"), type: "price" },
+                            { label: "DLR/JUL26", sym: "DLR/JUL26", val: safeGet("DLR/JUL26"), type: "price" },
+                            { label: "DLR/AGO26", sym: "DLR/AGO26", val: safeGet("DLR/AGO26"), type: "price" },
+                            { label: "DLR/SEP26", sym: "DLR/SEP26", val: safeGet("DLR/SEP26"), type: "price" }
+                          ]
+                        },
+                        {
+                          title: "CAUCIONES (TNA)",
+                          flex: "w-[38%]",
+                          priceMin: "min-w-[50px]",
+                          items: [
+                            { label: "PESOS - 1D", sym: "PESOS - 1D", val: 30.25, type: "rate" },
+                            { label: "PESOS - 3D", sym: "PESOS - 3D", val: 30.50, type: "rate" },
+                            { label: "PESOS - 7D", sym: "PESOS - 7D", val: 31.80, type: "rate" },
+                            { label: "PESOS - 30D", sym: "PESOS - 30D", val: 34.10, type: "rate" },
+                            { label: "DOLARES - 1D", sym: "DOLARES - 1D", val: 2.15, type: "rate" },
+                            { label: "DOLARES - 3D", sym: "DOLARES - 3D", val: 2.30, type: "rate" },
+                            { label: "DOLARES - 7D", sym: "DOLARES - 7D", val: 2.45, type: "rate" },
+                            { label: "DOLARES - 30D", sym: "DOLARES - 30D", val: 3.10, type: "rate" }
+                          ]
+                        },
+                        {
+                          title: "ACCIONES (BYMA)",
+                          flex: "w-[29%]",
+                          priceMin: "min-w-[68px]",
+                          isLast: true,
+                          items: [
+                            { label: "BMA", sym: "BMA - 48hs", val: 13300.00, type: "price" },
+                            { label: "BYMA", sym: "BYMA - 48hs", val: 301.25, type: "price" },
+                            { label: "CEPU", sym: "CEPU - 48hs", val: 301.25, type: "price" },
+                            { label: "GGAL", sym: "GGAL - 48hs", val: 6850.00, type: "price" },
+                            { label: "PAMP", sym: "PAMP - 48hs", val: 4815.00, type: "price" },
+                            { label: "YPFD", sym: "YPFD - 48hs", val: 55950.00, type: "price" },
+                            { label: "TECO2", sym: "TECO2 - 48hs", val: 3285.00, type: "price" },
+                            { label: "LOMA", sym: "LOMA - 48hs", val: 3287.50, type: "price" }
+                          ]
+                        }
+                      ];
 
-              return (
-                <div className="w-full h-full flex flex-col text-[12px] font-mono leading-none">
-
-                  {/* Títulos de columnas */}
-                  <div className="flex w-full border-b border-white/[0.05] shrink-0">
-                    {columns.map((col, cIdx) => (
-                      <div key={cIdx} className={`${col.flex} px-2 py-[3px] ${!col.isLast ? 'border-r border-white/[0.07]' : ''}`}>
-                        <span className="text-[8.5px] tracking-[0.12em] text-white/20 uppercase font-semibold font-sans">{col.title}</span>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Filas de datos */}
-                  <div className="flex-1 flex flex-col min-h-0">
-                    {Array.from({ length: maxItems }).map((_, rIdx) => {
-                      const rowBgColor = rIdx % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent';
+                      const maxItems = 8;
 
                       return (
-                        <div key={rIdx} className="flex w-full flex-1 items-center" style={{ backgroundColor: rowBgColor }}>
-                          {columns.map((col, cIdx) => {
-                            const item = col.items[rIdx];
-                            if (!item || !item.label) {
-                              return <div key={cIdx} className={`${col.flex} flex px-2 h-full items-center shrink-0 ${!col.isLast ? 'border-r border-white/[0.07]' : ''}`}></div>;
-                            }
+                        <div className="w-full h-full flex flex-col text-[12px] font-mono leading-none">
 
-                            const mockSymbolsArray = [
-                              "DLR/FEB26", "DLR/MAR26", "DLR/ABR26", "DLR/MAY26",
-                              "DLR/JUN26", "DLR/JUL26", "DLR/AGO26", "DLR/SEP26",
-                              "BMA - 48hs", "BYMA - 48hs", "CEPU - 48hs", "GGAL - 48hs",
-                              "PAMP - 48hs", "YPFD - 48hs", "TECO2 - 48hs", "LOMA - 48hs",
-                              "PESOS - 1D", "PESOS - 3D", "PESOS - 7D", "PESOS - 30D",
-                              "DOLARES - 1D", "DOLARES - 3D", "DOLARES - 7D", "DOLARES - 30D"
-                            ];
-
-                            const initialValuesMap = {
-                              "DLR/FEB26": 1418.00, "DLR/MAR26": 1432.00, "DLR/ABR26": 1446.00, "DLR/MAY26": 1456.00,
-                              "DLR/JUN26": 1464.00, "DLR/JUL26": 1473.00, "DLR/AGO26": 1482.00, "DLR/SEP26": 1491.00,
-                              "BMA - 48hs": 13300.00, "BYMA - 48hs": 301.25, "CEPU - 48hs": 301.25, "GGAL - 48hs": 6850.00,
-                              "PAMP - 48hs": 4815.00, "YPFD - 48hs": 55950.00, "TECO2 - 48hs": 3285.00, "LOMA - 48hs": 3287.50,
-                              "PESOS - 1D": 30.25, "PESOS - 3D": 30.50, "PESOS - 7D": 31.80, "PESOS - 30D": 34.10,
-                              "DOLARES - 1D": 2.15, "DOLARES - 3D": 2.30, "DOLARES - 7D": 2.45, "DOLARES - 30D": 3.10
-                            };
-
-                            const flashKey = `rofex_${item.sym}`;
-                            const flash = flashMap[flashKey];
-                            const symItem = mockSymbolsArray.includes(item.sym) ? item.sym : null;
-                            const hasVal = item.val !== null || safeGet(symItem) !== null;
-                            const currentVal = safeGet(item.sym) !== null ? safeGet(item.sym) : item.val;
-
-                            // Definir un precio inicial "base" para calcular una variación realista
-                            const initialVal = symItem ? initialValuesMap[symItem] : item.val;
-
-                            let fakeVar = 0;
-                            if (hasVal && currentVal && initialVal) {
-                              fakeVar = ((currentVal - initialVal) / initialVal) * 100;
-                            } else {
-                              // Fallback estático viejo si por alguna razón falla el simulador
-                              const hash = item.label.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-                              fakeVar = ((hash % 800) / 100) - 4; // Entre -4.00% y +4.00%
-                            }
-
-                            const isPos = fakeVar >= 0;
-
-                            return (
-                              <div
-                                key={cIdx}
-                                className={`${col.flex} flex justify-between items-center h-full pl-2 ${!col.isLast ? 'border-r border-white/[0.07]' : ''} ${flash === 'up' ? 'flash-up' : flash === 'down' ? 'flash-down' : ''}`}
-                              >
-                                {/* Ticker label */}
-                                <span className="text-zinc-500 truncate mr-1 min-w-[30px] transform-gpu antialiased tracking-wide">{item.label}</span>
-                                <div className={`flex items-center h-full shrink-0 whitespace-nowrap transform-gpu antialiased ${cIdx > 0 ? 'pr-2' : 'pr-1'}`}>
-                                  {/* Precio */}
-                                  <div className={`relative h-full flex items-center ${col.priceMin} justify-end overflow-hidden ${hasVal ? "text-slate-200" : "text-white/20"} mr-1`}>
-                                    <AnimatePresence mode="popLayout" initial={false}>
-                                      <motion.span
-                                        key={hasVal ? currentVal : 'empty'}
-                                        initial={{ y: flash === 'up' ? 10 : (flash === 'down' ? -10 : 0), opacity: flash ? 0 : 1, filter: flash ? 'blur(2px)' : 'blur(0px)' }}
-                                        animate={{ y: 0, opacity: 1, filter: 'blur(0px)' }}
-                                        exit={{ y: flash === 'up' ? -10 : (flash === 'down' ? 10 : 0), opacity: flash ? 0 : 1, filter: flash ? 'blur(2px)' : 'blur(0px)' }}
-                                        transition={{ duration: flash ? 0.25 : 0, ease: "easeOut" }}
-                                        className="absolute right-0 font-mono tracking-tight"
-                                      >
-                                        {hasVal
-                                          ? (item.type === 'price' ? fmtPrice(currentVal) : fmtRate(currentVal))
-                                          : '-.--'}
-                                      </motion.span>
-                                    </AnimatePresence>
-                                  </div>
-
-                                  {/* Badge variación */}
-                                  {hasVal ? (
-                                    <div className={`relative h-full w-[42px] flex items-center justify-end font-bold text-[11px] transform-gpu antialiased overflow-hidden ${isPos ? 'text-emerald-400' : 'text-red-400'}`}>
-                                      <AnimatePresence mode="popLayout" initial={false}>
-                                        <motion.div
-                                          key={fakeVar}
-                                          initial={{ y: flash === 'up' ? 8 : (flash === 'down' ? -8 : 0), opacity: flash ? 0 : 1, filter: flash ? 'blur(2px)' : 'blur(0px)' }}
-                                          animate={{ y: 0, opacity: 1, filter: 'blur(0px)' }}
-                                          exit={{ y: flash === 'up' ? -8 : (flash === 'down' ? 8 : 0), opacity: flash ? 0 : 1, filter: flash ? 'blur(2px)' : 'blur(0px)' }}
-                                          transition={{ duration: flash ? 0.25 : 0, ease: "easeOut" }}
-                                          className="absolute right-0"
-                                        >
-                                          {isPos ? '+' : ''}{fakeVar.toFixed(2)}%
-                                        </motion.div>
-                                      </AnimatePresence>
-                                    </div>
-                                  ) : (
-                                    <div className="h-full w-[45px]"></div>
-                                  )}
-                                </div>
+                          {/* Títulos de columnas */}
+                          <div className="flex w-full border-b border-white/[0.05] shrink-0">
+                            {columns.map((col, cIdx) => (
+                              <div key={cIdx} className={`${col.flex} px-2 py-[3px] ${!col.isLast ? 'border-r border-white/[0.07]' : ''}`}>
+                                <span className="text-[8.5px] tracking-[0.12em] text-white/20 uppercase font-semibold font-sans">{col.title}</span>
                               </div>
-                            );
-                          })}
+                            ))}
+                          </div>
+
+                          {/* Filas de datos */}
+                          <div className="flex-1 flex flex-col min-h-0">
+                            {Array.from({ length: maxItems }).map((_, rIdx) => {
+                              const rowBgColor = rIdx % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent';
+
+                              return (
+                                <div key={rIdx} className="flex w-full flex-1 items-center" style={{ backgroundColor: rowBgColor }}>
+                                  {columns.map((col, cIdx) => {
+                                    const item = col.items[rIdx];
+                                    if (!item || !item.label) {
+                                      return <div key={cIdx} className={`${col.flex} flex px-2 h-full items-center shrink-0 ${!col.isLast ? 'border-r border-white/[0.07]' : ''}`}></div>;
+                                    }
+
+                                    const mockSymbolsArray = [
+                                      "DLR/FEB26", "DLR/MAR26", "DLR/ABR26", "DLR/MAY26",
+                                      "DLR/JUN26", "DLR/JUL26", "DLR/AGO26", "DLR/SEP26",
+                                      "BMA - 48hs", "BYMA - 48hs", "CEPU - 48hs", "GGAL - 48hs",
+                                      "PAMP - 48hs", "YPFD - 48hs", "TECO2 - 48hs", "LOMA - 48hs",
+                                      "PESOS - 1D", "PESOS - 3D", "PESOS - 7D", "PESOS - 30D",
+                                      "DOLARES - 1D", "DOLARES - 3D", "DOLARES - 7D", "DOLARES - 30D"
+                                    ];
+
+                                    const initialValuesMap = {
+                                      "DLR/FEB26": 1418.00, "DLR/MAR26": 1432.00, "DLR/ABR26": 1446.00, "DLR/MAY26": 1456.00,
+                                      "DLR/JUN26": 1464.00, "DLR/JUL26": 1473.00, "DLR/AGO26": 1482.00, "DLR/SEP26": 1491.00,
+                                      "BMA - 48hs": 13300.00, "BYMA - 48hs": 301.25, "CEPU - 48hs": 301.25, "GGAL - 48hs": 6850.00,
+                                      "PAMP - 48hs": 4815.00, "YPFD - 48hs": 55950.00, "TECO2 - 48hs": 3285.00, "LOMA - 48hs": 3287.50,
+                                      "PESOS - 1D": 30.25, "PESOS - 3D": 30.50, "PESOS - 7D": 31.80, "PESOS - 30D": 34.10,
+                                      "DOLARES - 1D": 2.15, "DOLARES - 3D": 2.30, "DOLARES - 7D": 2.45, "DOLARES - 30D": 3.10
+                                    };
+
+                                    const flashKey = `rofex_${item.sym}`;
+                                    const flash = flashMap[flashKey];
+                                    const symItem = mockSymbolsArray.includes(item.sym) ? item.sym : null;
+                                    const hasVal = item.val !== null || safeGet(symItem) !== null;
+                                    const currentVal = safeGet(item.sym) !== null ? safeGet(item.sym) : item.val;
+
+                                    // Definir un precio inicial "base" para calcular una variación realista
+                                    const initialVal = symItem ? initialValuesMap[symItem] : item.val;
+
+                                    let fakeVar = 0;
+                                    if (hasVal && currentVal && initialVal) {
+                                      fakeVar = ((currentVal - initialVal) / initialVal) * 100;
+                                    } else {
+                                      // Fallback estático viejo si por alguna razón falla el simulador
+                                      const hash = item.label.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+                                      fakeVar = ((hash % 800) / 100) - 4; // Entre -4.00% y +4.00%
+                                    }
+
+                                    const isPos = fakeVar >= 0;
+
+                                    return (
+                                      <div
+                                        key={cIdx}
+                                        className={`${col.flex} flex justify-between items-center h-full pl-2 ${!col.isLast ? 'border-r border-white/[0.07]' : ''} ${flash === 'up' ? 'flash-up' : flash === 'down' ? 'flash-down' : ''}`}
+                                      >
+                                        {/* Ticker label */}
+                                        <span className="text-zinc-500 truncate mr-1 min-w-[30px] transform-gpu antialiased tracking-wide">{item.label}</span>
+                                        <div className={`flex items-center h-full shrink-0 whitespace-nowrap transform-gpu antialiased ${cIdx > 0 ? 'pr-2' : 'pr-1'}`}>
+                                          {/* Precio */}
+                                          <div className={`relative h-full flex items-center ${col.priceMin} justify-end overflow-hidden ${hasVal ? "" : "text-white/20"} mr-1`} style={hasVal ? { color: '#c0c0c0' } : {}}>
+                                            <AnimatePresence mode="popLayout" initial={false}>
+                                              <motion.span
+                                                key={hasVal ? currentVal : 'empty'}
+                                                initial={{ y: flash === 'up' ? 10 : (flash === 'down' ? -10 : 0), opacity: flash ? 0 : 1, filter: flash ? 'blur(2px)' : 'blur(0px)' }}
+                                                animate={{ y: 0, opacity: 1, filter: 'blur(0px)' }}
+                                                exit={{ y: flash === 'up' ? -10 : (flash === 'down' ? 10 : 0), opacity: flash ? 0 : 1, filter: flash ? 'blur(2px)' : 'blur(0px)' }}
+                                                transition={{ duration: flash ? 0.25 : 0, ease: "easeOut" }}
+                                                className="absolute right-0 font-mono tracking-tight"
+                                              >
+                                                {hasVal
+                                                  ? (item.type === 'price' ? fmtPrice(currentVal) : fmtRate(currentVal))
+                                                  : '-.--'}
+                                              </motion.span>
+                                            </AnimatePresence>
+                                          </div>
+
+                                          {/* Badge variación */}
+                                          {hasVal ? (
+                                            <div className={`relative h-full w-[42px] flex items-center justify-end font-bold text-[11px] transform-gpu antialiased overflow-hidden ${isPos ? 'text-emerald-400' : 'text-red-400'}`}>
+                                              <AnimatePresence mode="popLayout" initial={false}>
+                                                <motion.div
+                                                  key={fakeVar}
+                                                  initial={{ y: flash === 'up' ? 8 : (flash === 'down' ? -8 : 0), opacity: flash ? 0 : 1, filter: flash ? 'blur(2px)' : 'blur(0px)' }}
+                                                  animate={{ y: 0, opacity: 1, filter: 'blur(0px)' }}
+                                                  exit={{ y: flash === 'up' ? -8 : (flash === 'down' ? 8 : 0), opacity: flash ? 0 : 1, filter: flash ? 'blur(2px)' : 'blur(0px)' }}
+                                                  transition={{ duration: flash ? 0.25 : 0, ease: "easeOut" }}
+                                                  className="absolute right-0"
+                                                >
+                                                  {isPos ? '+' : ''}{fakeVar.toFixed(2)}%
+                                                </motion.div>
+                                              </AnimatePresence>
+                                            </div>
+                                          ) : (
+                                            <div className="h-full w-[45px]"></div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
                       );
-                    })}
+                    })()}
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="top-movers"
+                    initial={{ y: 50, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    exit={{ y: -50, opacity: 0 }}
+                    transition={{ duration: 0.5, ease: "easeInOut" }}
+                    className="absolute inset-0 w-full h-full"
+                  >
+                    <TopMovers />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </motion.div>
+
+          {/* W3: NEWS / ECO CALENDAR (384px) */}
+          <motion.div
+            animate={{ y: isAiActive ? -200 : 0 }}
+            transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
+            className="w-[384px] h-[192px] border-r border-white/5 shrink-0 bg-[#070707] font-sans overflow-hidden relative shadow-[inset_0_0_40px_rgba(0,0,0,0.8)]"
+          >
+            <AnimatePresence mode="wait">
+              {currentViewW3 === 'NEWS' ? (
+                <motion.div
+                  key="news-view"
+                  initial={{ y: 50, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  exit={{ y: -50, opacity: 0 }}
+                  transition={{ duration: 0.5, ease: "easeInOut" }}
+                  className="absolute inset-0 flex flex-col"
+                >
+                  {/* Header noticias */}
+                  <div className="w-full px-5 py-2.5 border-b border-white/5 bg-gradient-to-b from-white/[0.04] to-transparent flex justify-between items-center z-10 backdrop-blur-md shrink-0">
+                    <div className="flex items-center gap-2">
+                      <svg className="w-3.5 h-3.5 text-zinc-400 -translate-y-[0.5px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9.5a2.5 2.5 0 00-2.5-2.5H14" />
+                      </svg>
+                      <span className="text-white/80 text-[10px] font-semibold tracking-[0.2em]">LATEST HEADLINES</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 px-3 py-1 rounded-sm bg-red-500/10 border border-red-500/20">
+                      <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse"></span>
+                      <span className="text-red-400 text-[8px] font-bold tracking-[0.15em] -translate-y-[0.5px]">LIVE</span>
+                    </div>
                   </div>
-                </div>
-              );
-            })()}
-          </div>
-        </motion.div>
+                  {/* Contenido noticias */}
+                  <div className="flex-1 overflow-hidden relative">
+                    <PremiumNewsFeed news={news} activeIdx={newsIdx} />
+                  </div>
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="calendar-view"
+                  initial={{ y: 50, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  exit={{ y: -50, opacity: 0 }}
+                  transition={{ duration: 0.5, ease: "easeInOut" }}
+                  className="absolute inset-0 flex flex-col"
+                >
+                  {/* Header calendario */}
+                  <div className="w-full pl-2 pr-5 py-2.5 border-b border-white/5 bg-gradient-to-b from-white/[0.04] to-transparent flex justify-between items-center z-10 backdrop-blur-md shrink-0">
+                    <div className="flex items-center gap-2">
+                      <svg className="w-3.5 h-3.5 text-zinc-400 -translate-y-[0.5px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
+                      <span className="text-white/80 text-[10px] font-semibold tracking-[0.2em]">ECO CALENDAR</span>
+                    </div>
+                    <span className="text-zinc-600 text-[9px] font-mono tracking-wider">
+                      {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase()}
+                    </span>
+                  </div>
+                  {/* Contenido calendario */}
+                  <div className="flex-1 overflow-hidden relative">
+                    <EconCalendar />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </motion.div>
 
-        {/* W3: NEWS — PREMIUM WIDGET (384px) */}
-        <motion.div
-          animate={{ y: isAiActive ? -200 : 0 }}
-          transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
-          className="w-[384px] h-[192px] border-r border-white/5 shrink-0 bg-[#070707] flex flex-col font-sans overflow-hidden relative shadow-[inset_0_0_40px_rgba(0,0,0,0.8)]"
-        >
-          {/* Elegante Header */}
-          <div className="w-full px-5 py-2.5 border-b border-white/5 bg-gradient-to-b from-white/[0.04] to-transparent flex justify-between items-center z-10 backdrop-blur-md">
-            <div className="flex items-center gap-2">
-              <svg className="w-3.5 h-3.5 text-zinc-400 -translate-y-[0.5px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9.5a2.5 2.5 0 00-2.5-2.5H14" />
-              </svg>
-              <span className="text-white/80 text-[10px] font-semibold tracking-[0.2em]">LATEST HEADLINES</span>
-            </div>
-            <div className="flex items-center gap-1.5 px-3 py-1 rounded-sm bg-red-500/10 border border-red-500/20">
-              <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse"></span>
-              <span className="text-red-400 text-[8px] font-bold tracking-[0.15em] -translate-y-[0.5px]">LIVE</span>
-            </div>
-          </div>
+          {/* W4: WORLD CLOCKS / HEATMAP (576px) */}
+          <motion.div
+            animate={{ y: isAiActive ? 200 : 0 }}
+            transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
+            className="w-[576px] h-full flex items-center justify-center shrink-0 border-l border-r border-gray-900 relative overflow-hidden bg-black"
+          >
+            <AnimatePresence mode="wait">
+              {currentView === 'LOCAL' ? (
+                <motion.div
+                  key="local-clocks"
+                  initial={{ y: 50, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  exit={{ y: -50, opacity: 0 }}
+                  transition={{ duration: 0.5, ease: "easeInOut" }}
+                  className="absolute inset-0 w-full h-full flex items-center justify-around px-3 bg-zinc-950/20"
+                >
+                  {/* Mapa del mundo de fondo (SVG realista) */}
+                  <div
+                    className="absolute inset-0 pointer-events-none opacity-[0.12]"
+                    style={{
+                      backgroundImage: 'url(/world_map.svg)',
+                      backgroundSize: '80% auto',
+                      backgroundPosition: 'center 20%',
+                      backgroundRepeat: 'no-repeat',
+                    }}
+                  />
+                  <Clock city="BS AS" zone="America/Argentina/Buenos_Aires" time={masterTime} />
+                  <Clock city="NY" zone="America/New_York" time={masterTime} />
+                  <Clock city="LONDON" zone="Europe/London" time={masterTime} />
+                  <Clock city="TOKIO" zone="Asia/Tokyo" time={masterTime} />
+                  <Clock city="BEIJING" zone="Asia/Shanghai" time={masterTime} />
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="global-heatmap"
+                  initial={{ y: 50, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  exit={{ y: -50, opacity: 0 }}
+                  transition={{ duration: 0.5, ease: "easeInOut" }}
+                  className="absolute inset-0 w-full h-full"
+                >
+                  <MarketHeatmap />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </motion.div>
 
-          {/* Contenido principal (Premium Feed) */}
-          <div className="flex-1 w-full overflow-hidden relative">
-            <PremiumNewsFeed news={news} activeIdx={newsIdx} />
-          </div>
-        </motion.div>
+        </div >
 
-        {/* W4: WORLD CLOCKS (576px) - 5 EN FILA HORIZONTAL */}
-        <motion.div
-          animate={{ y: isAiActive ? 200 : 0 }}
-          transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
-          className="w-[576px] h-full flex items-center justify-around px-3 bg-zinc-950/20 shrink-0 border-l border-r border-gray-900 relative"
-        >
-          {/* Mapa del mundo de fondo (SVG realista) */}
-          <div
-            className="absolute inset-0 pointer-events-none opacity-[0.12]"
-            style={{
-              backgroundImage: 'url(/world_map.svg)',
-              backgroundSize: '80% auto',
-              backgroundPosition: 'center 20%',
-              backgroundRepeat: 'no-repeat',
-            }}
-          />
-          <Clock city="BS AS" zone="America/Argentina/Buenos_Aires" time={masterTime} />
-          <Clock city="NY" zone="America/New_York" time={masterTime} />
-          <Clock city="LONDON" zone="Europe/London" time={masterTime} />
-          <Clock city="TOKIO" zone="Asia/Tokyo" time={masterTime} />
-          <Clock city="BEIJING" zone="Asia/Shanghai" time={masterTime} />
-        </motion.div>
+        {/* VIEW SWITCHER TABS (Bottom Bar, attached to W2) */}
+        <div className="absolute top-[216px] left-[800px] -translate-x-1/2 flex items-center gap-3">
+          <button
+            onClick={() => setCurrentViewW2('TICKERS')}
+            className={`px-4 py-1.5 text-[11px] font-bold tracking-widest uppercase rounded-sm transition-all duration-300 ${currentViewW2 === 'TICKERS' ? 'bg-zinc-800 text-white' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}`}
+          >
+            Market Watch
+          </button>
+          <button
+            onClick={() => setCurrentViewW2('MOVERS')}
+            className={`px-4 py-1.5 text-[11px] font-bold tracking-widest uppercase rounded-sm transition-all duration-300 ${currentViewW2 === 'MOVERS' ? 'bg-zinc-800 text-white' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}`}
+          >
+            Top Movers
+          </button>
+        </div>
+
+        {/* VIEW SWITCHER TABS (Bottom Bar, attached to W3) */}
+        <div className="absolute top-[216px] left-[1280px] -translate-x-1/2 flex items-center gap-3">
+          <button
+            onClick={() => setCurrentViewW3('NEWS')}
+            className={`px-4 py-1.5 text-[11px] font-bold tracking-widest uppercase rounded-sm transition-all duration-300 ${currentViewW3 === 'NEWS' ? 'bg-zinc-800 text-white' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}`}
+          >
+            Headlines
+          </button>
+          <button
+            onClick={() => setCurrentViewW3('CALENDAR')}
+            className={`px-4 py-1.5 text-[11px] font-bold tracking-widest uppercase rounded-sm transition-all duration-300 ${currentViewW3 === 'CALENDAR' ? 'bg-zinc-800 text-white' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}`}
+          >
+            Eco Calendar
+          </button>
+        </div>
+
+        {/* VIEW SWITCHER TABS (Bottom Bar, attached to W4) */}
+        <div className="absolute top-[216px] right-[288px] translate-x-1/2 flex items-center gap-3">
+          <button
+            onClick={() => setCurrentView('LOCAL')}
+            className={`px-4 py-1.5 text-[11px] font-bold tracking-widest uppercase rounded-sm transition-all duration-300 ${currentView === 'LOCAL' ? 'bg-zinc-800 text-white' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}`}
+          >
+            World Clocks
+          </button>
+          <button
+            onClick={() => setCurrentView('GLOBAL')}
+            className={`px-4 py-1.5 text-[11px] font-bold tracking-widest uppercase rounded-sm transition-all duration-300 ${currentView === 'GLOBAL' ? 'bg-zinc-800 text-white' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}`}
+          >
+            Global Markets
+          </button>
+        </div>
 
       </div >
     </div >
