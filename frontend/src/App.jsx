@@ -12,7 +12,7 @@ const TICKERS_ROTATION = ["NVDA", "MSFT", "GOOG", "META", "TSLA", "AMZN", "AAPL"
 const PremiumNewsFeed = ({ news, activeIdx }) => {
   if (!news || news.length === 0) {
     return (
-      <div className="w-full h-full flex items-center justify-center font-sans backdrop-blur-md bg-black/40">
+      <div className="w-full h-full flex items-center justify-center font-sans backdrop-blur-md bg-[#111111]/40">
         <div className="flex flex-col items-center gap-3">
           <svg className="w-5 h-5 text-blue-500/50 animate-spin" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -39,7 +39,7 @@ const PremiumNewsFeed = ({ news, activeIdx }) => {
   const style = getSourceStyle(activeNews.source || '');
 
   return (
-    <div className="w-full h-full relative overflow-hidden bg-[#050505] font-sans">
+    <div className="w-full h-full relative overflow-hidden bg-[#131313] font-sans">
 
       {/* Dynamic Background Gradients */}
       <AnimatePresence mode="popLayout">
@@ -97,7 +97,6 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
     { name: ticker, type: 'area', data: [] },
     { name: 'SMA 20', type: 'line', data: [] },
     { name: 'SMA 50', type: 'line', data: [] },
-    { name: 'Volume', type: 'bar', data: [] },
   ]);
   const [scalesOpacity, setScalesOpacity] = useState(0);
   const [lineClip, setLineClip] = useState(0);
@@ -128,7 +127,6 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
             { name: ticker, type: 'area', data: data.map(d => [d.time, d.value]) },
             { name: 'SMA 20', type: 'line', data: data.filter(d => d.sma20 != null).map(d => [d.time, d.sma20]) },
             { name: 'SMA 50', type: 'line', data: data.filter(d => d.sma50 != null).map(d => [d.time, d.sma50]) },
-            { name: 'Volume', type: 'bar', data: data.map(d => [d.time, d.volume || 0]) },
           ]);
 
           // Calcular precio y variación
@@ -204,12 +202,12 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
     },
     stroke: {
       curve: 'straight',
-      width: [1.5, 1, 1, 0],
-      colors: ['#87CEEB', '#FFD700', '#00E5FF', 'transparent'],
-      dashArray: [0, 0, 0, 0],
+      width: [1.5, 1, 1],
+      colors: ['#87CEEB', '#FFD700', '#00E5FF'],
+      dashArray: [0, 0, 0],
     },
     fill: {
-      type: ['gradient', 'solid', 'solid', 'solid'],
+      type: ['gradient', 'solid', 'solid'],
       gradient: {
         shadeIntensity: 1,
         opacityFrom: 0.9,
@@ -219,10 +217,10 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
           [{ offset: 0, color: '#1e3a8a', opacity: 0.8 }, { offset: 100, color: '#000000', opacity: 0.2 }]
         ]
       },
-      opacity: [1, 1, 1, 0.35],
-      colors: ['#1e3a8a', '#FFD700', '#00E5FF', '#555555']
+      opacity: [1, 1, 1],
+      colors: ['#1e3a8a', '#FFD700', '#00E5FF']
     },
-    colors: ['#87CEEB', '#FFD700', '#00E5FF', '#555555'],
+    colors: ['#87CEEB', '#FFD700', '#00E5FF'],
     grid: {
       show: true,
       borderColor: '#333333',
@@ -254,19 +252,8 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
       {
         seriesName: ticker,
         show: false,
-      },
-      {
-        seriesName: 'Volume',
-        opposite: false,
-        show: false,
-        max: (max) => max * 4,
       }
     ],
-    plotOptions: {
-      bar: {
-        columnWidth: '80%',
-      }
-    },
     annotations: {
       yaxis: priceInfo ? [{
         y: priceInfo.price,
@@ -311,8 +298,7 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
           /* Grid stays static, only series fade/clip away */
           .apexcharts-series-group, 
           .apexcharts-area-series, 
-          .apexcharts-line-series,
-          .apexcharts-bar-series {
+          .apexcharts-line-series {
             transition: clip-path 1500ms ease-in-out !important;
             clip-path: inset(0 ${100 - lineClip}% 0 0);
           }
@@ -320,7 +306,7 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
         </style>
 
         {/* DAY SESSION INFO BOX (LAST PRICE, VARIACIÓN, SMAs) */}
-        <div className="absolute top-[8px] left-[8px] z-10 border border-[#888] rounded-sm bg-black/70 text-white text-[8px] p-1 w-36 font-bold shadow-md">
+        <div className="absolute top-[8px] left-[8px] z-10 border border-[#888] rounded-sm bg-[#111111]/70 text-white text-[8px] p-1 w-36 font-bold shadow-md">
           <div className="text-center mb-[2px] tracking-wide text-[#bbbbbb] pb-[2px] border-b border-[#333]">Day Session (<span className="text-white text-[10px]">{ticker}</span>)</div>
           <div className="flex justify-between items-center pt-[2px]">
             <span className="flex items-center gap-[3px]"><span className="w-1.5 h-1.5 bg-white inline-block"></span>Last Price</span>
@@ -402,7 +388,7 @@ const MarqueeHeadline = ({ text, maxDuration, id }) => {
   );
 };
 
-const AnimatedTypingText = ({ text, isPos = true }) => {
+const AnimatedTypingText = ({ text, isPos = true, speed = 35, className = "max-h-[115px]" }) => {
   const [displayedText, setDisplayedText] = useState('');
   const containerRef = useRef(null);
 
@@ -415,10 +401,10 @@ const AnimatedTypingText = ({ text, isPos = true }) => {
       setDisplayedText(text.substring(0, i + 1));
       i++;
       if (i >= text.length) clearInterval(interval);
-    }, 20); // Velocidad de tipeo: 20ms por letra
+    }, speed); // Velocidad de tipeo
 
     return () => clearInterval(interval);
-  }, [text]);
+  }, [text, speed]);
 
   useEffect(() => {
     if (containerRef.current) {
@@ -429,14 +415,14 @@ const AnimatedTypingText = ({ text, isPos = true }) => {
   return (
     <div
       ref={containerRef}
-      className="max-h-[115px] overflow-y-auto ai-scroll-container"
+      className={`${className} overflow-y-auto ai-scroll-container`}
       style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
     >
       <style>{`.ai-scroll-container::-webkit-scrollbar { display: none; }`}</style>
-      <span className="relative">
+      <div className="relative pb-2">
         {displayedText}
         <span className={`inline-block w-[4px] h-[12px] ml-1 animate-pulse align-baseline ${isPos ? 'bg-emerald-400' : 'bg-red-400'}`} />
-      </span>
+      </div>
     </div>
   );
 };
@@ -459,7 +445,7 @@ const CompanyDataDisplay = ({ data, active }) => {
   if (!data) {
     return (
       <motion.div
-        className="absolute inset-0 z-50 flex items-center justify-center bg-[#020202] font-mono overflow-hidden h-[192px]"
+        className="absolute inset-0 z-50 flex items-center justify-center bg-[#111111] font-mono overflow-hidden h-[192px]"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
@@ -547,7 +533,7 @@ const CompanyDataDisplay = ({ data, active }) => {
 
   return (
     <motion.div
-      className="absolute inset-0 z-50 flex bg-[#030303] font-mono overflow-hidden h-[192px]"
+      className="absolute inset-0 z-50 flex bg-[#111111] font-mono overflow-hidden h-[192px]"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
@@ -555,7 +541,7 @@ const CompanyDataDisplay = ({ data, active }) => {
     >
       {/* ── COL 1: Identidad de Empresa (320px) ── */}
       <div
-        className="flex flex-col justify-center px-6 border-r border-[#222] shrink-0 bg-[#000]"
+        className="flex flex-col justify-center px-6 border-r border-[#222] shrink-0 bg-[#111111]"
         style={{ width: '320px' }}
       >
         <div className="text-[36px] font-bold text-white leading-none tracking-widest truncate">{ticker}</div>
@@ -588,7 +574,7 @@ const CompanyDataDisplay = ({ data, active }) => {
       </div>
 
       {/* ── COL 3: Yahoo Scout Animated Text (Flexible width) ── */}
-      <div className={`flex-1 flex flex-col justify-center px-8 border-r border-[#222] relative overflow-hidden bg-[#000] ${isPos ? 'shadow-[inset_0_0_80px_rgba(52,211,153,0.02)]' : 'shadow-[inset_0_0_80px_rgba(248,113,113,0.02)]'}`}>
+      <div className={`flex-1 flex flex-col justify-center px-8 border-r border-[#222] relative overflow-hidden bg-[#111111] ${isPos ? 'shadow-[inset_0_0_80px_rgba(52,211,153,0.02)]' : 'shadow-[inset_0_0_80px_rgba(248,113,113,0.02)]'}`}>
         <div className={`absolute top-4 left-6 flex items-center gap-[6px] shrink-0 px-2.5 py-[4px] border rounded-[2px] glow-pulse ${isPos ? 'bg-emerald-400/10 border-emerald-400/30 shadow-[0_0_15px_rgba(52,211,153,0.15)]' : 'bg-red-400/10 border-red-400/30 shadow-[0_0_15px_rgba(248,113,113,0.15)]'}`}>
           <span className={`w-[6px] h-[6px] rounded-full animate-pulse ${isPos ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-red-400 shadow-[0_0_8px_#f87171]'}`} />
           <span className={`text-[11px] font-bold uppercase tracking-[0.25em] ${isPos ? 'text-emerald-400' : 'text-red-400'}`}>Returning in 00:{timeLeft.toString().padStart(2, '0')}</span>
@@ -607,7 +593,7 @@ const CompanyDataDisplay = ({ data, active }) => {
 
       {/* ── COL 4: Income Statement (580px) ── */}
       <div
-        className="flex flex-col justify-center px-6 shrink-0 bg-[#060606]"
+        className="flex flex-col justify-center px-6 shrink-0 bg-[#141414]"
         style={{ width: '580px' }}
       >
         <div className="flex items-center text-[9px] uppercase tracking-widest mb-[6px] pb-[5px] border-b border-[#333]">
@@ -635,144 +621,63 @@ const CompanyDataDisplay = ({ data, active }) => {
   );
 };
 
-// --- WIDGET 3 ALTERNATIVO: CALENDARIO ECONÓMICO (384px) ---
-const COUNTRY_META = {
-  'United States': { flag: '🇺🇸', code: 'US' },
-  'Euro Zone':     { flag: '🇪🇺', code: 'EU' },
-  'Eurozone':      { flag: '🇪🇺', code: 'EU' },
-  'Japan':         { flag: '🇯🇵', code: 'JP' },
-  'China':         { flag: '🇨🇳', code: 'CN' },
-  'Brazil':        { flag: '🇧🇷', code: 'BR' },
-  'Argentina':     { flag: '🇦🇷', code: 'AR' },
-};
+// --- WIDGET 3 ALTERNATIVO: YAHOO SCOUT INTELLIGENCE (384px) ---
+const YahooScoutWidget = () => {
+  const [localIdx, setLocalIdx] = useState(0);
+  const [data, setData] = useState(null);
+  const ticker = TICKERS_ROTATION[localIdx];
 
-const EconCalendar = () => {
-  const [events, setEvents] = useState([]);
-  const [page, setPage] = useState(0);
-  const [now, setNow] = useState(new Date());
-  const ITEMS = 5;
-
+  // Bucle independiente: Cambiar de acción cada 25 segundos
   useEffect(() => {
-    const load = async () => {
+    const interval = setInterval(() => {
+      setLocalIdx(prev => (prev + 1) % TICKERS_ROTATION.length);
+    }, 25000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Fetch data cuando cambia el ticker local
+  useEffect(() => {
+    let active = true;
+    const fetchScout = async () => {
+      setData(null);
       try {
-        const res = await fetch(`${API_BASE}/api/econ-calendar`);
-        const data = await res.json();
-        if (Array.isArray(data.events)) setEvents(data.events);
-      } catch (e) { /* silent */ }
+        const res = await fetch(`${API_BASE}/api/scout/${ticker}`);
+        const result = await res.json();
+        if (active && result && result.summary) {
+          setData(result);
+        }
+      } catch (e) {
+        console.error("Error fetching scout data", e);
+      }
     };
-    load();
-    const iv = setInterval(load, 3600000); // refresca cada hora
-    return () => clearInterval(iv);
-  }, []);
-
-  // Actualiza el reloj cada minuto para recalcular qué eventos ya ocurrieron
-  useEffect(() => {
-    const iv = setInterval(() => setNow(new Date()), 60000);
-    return () => clearInterval(iv);
-  }, []);
-
-  const isPast = (timeStr) => {
-    if (!timeStr) return false;
-    const [h, m] = timeStr.split(':').map(Number);
-    if (isNaN(h) || isNaN(m)) return false;
-    return h * 60 + m < now.getHours() * 60 + now.getMinutes();
-  };
-
-  const totalPages = Math.max(1, Math.ceil(events.length / ITEMS));
-  useEffect(() => {
-    if (events.length <= ITEMS) return;
-    const iv = setInterval(() => setPage(p => (p + 1) % totalPages), 8000);
-    return () => clearInterval(iv);
-  }, [events.length, totalPages]);
-
-  const pageEvents = events.slice(page * ITEMS, (page + 1) * ITEMS);
-
-  if (events.length === 0) {
-    return (
-      <div className="w-full h-full flex items-center justify-center">
-        <div className="flex flex-col items-center gap-2">
-          <svg className="w-4 h-4 text-zinc-700 animate-spin" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-          </svg>
-          <span className="text-[9px] uppercase tracking-[0.2em] text-white/20">Cargando eventos...</span>
-        </div>
-      </div>
-    );
-  }
+    fetchScout();
+    return () => { active = false; };
+  }, [ticker]);
 
   return (
-    <div className="w-full h-full bg-[#070707] overflow-hidden">
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={page}
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -8 }}
-          transition={{ duration: 0.35 }}
-          className="w-full h-full flex flex-col"
-        >
-          {pageEvents.map((ev, i) => {
-            const cm = COUNTRY_META[ev.country] || {
-              flag: '🌐',
-              code: (ev.country || '??').slice(0, 2).toUpperCase(),
-            };
-            const impactColor =
-              ev.impact >= 3 ? '#f87171' :
-              ev.impact === 2 ? '#fbbf24' : '#3f3f46';
-            const past = isPast(ev.time);
-
-            return (
-              <div
-                key={i}
-                className="flex-1 flex items-center px-2 border-b border-white/[0.04] last:border-b-0 gap-1.5 min-h-0"
-                style={{ backgroundColor: past ? 'rgba(248,113,113,0.08)' : 'transparent' }}
-              >
-                {/* Hora */}
-                <span className={`text-[14px] font-mono w-[40px] shrink-0 tabular-nums ${past ? 'text-red-400/60 line-through' : 'text-zinc-400'}`}>
-                  {ev.time}
-                </span>
-
-                {/* Bandera */}
-                <span className="text-[18px] shrink-0 leading-none -translate-y-[2px]">{cm.flag}</span>
-
-                {/* Dot de impacto */}
-                <div
-                  className="w-[7px] h-[7px] rounded-full shrink-0"
-                  style={{ backgroundColor: impactColor }}
-                />
-
-                {/* Nombre del evento */}
-                <span className="text-[14px] flex-1 truncate min-w-0 leading-tight" style={{ color: '#c0c0c0' }}>
-                  {ev.event}
-                </span>
-
-                {/* Valor: solo se renderiza si hay dato, para no robar espacio */}
-                {(ev.actual || ev.forecast) && (
-                  <div className="shrink-0 text-right">
-                    {ev.actual
-                      ? <span className="text-[13px] font-mono font-bold text-emerald-400">{ev.actual}</span>
-                      : <span className="text-[13px] font-mono text-zinc-600">{ev.forecast}</span>
-                    }
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </motion.div>
-      </AnimatePresence>
-
-      {/* Indicador de página */}
-      {totalPages > 1 && (
-        <div className="absolute bottom-[2px] right-3 flex gap-1">
-          {Array.from({ length: totalPages }).map((_, pi) => (
-            <div
-              key={pi}
-              className="w-1 h-1 rounded-full transition-all duration-300"
-              style={{ backgroundColor: pi === page ? '#52525b' : '#27272a' }}
-            />
-          ))}
+    <div className="w-full h-full p-4 flex flex-col font-mono text-white/90 bg-[#151515]">
+      {!data ? (
+        <div className="flex-1 flex items-center justify-center gap-2 text-white/30 text-[10px] uppercase tracking-widest">
+          <svg className="w-4 h-4 text-emerald-400/50 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          ANALYZING {ticker}...
         </div>
+      ) : (
+        <>
+          <div className="flex justify-between items-center mb-2 border-b border-emerald-400/20 pb-2 shrink-0">
+            <span className="text-[14px] font-bold text-white/90 tracking-wider tooltip" title={data.name}>
+              {data.ticker}
+            </span>
+            <span className="text-[9px] text-emerald-400 uppercase tracking-widest bg-emerald-400/10 px-2 py-0.5 rounded border border-emerald-400/20 -translate-y-[2px]">
+              AI SUMMARY
+            </span>
+          </div>
+          <div className="flex-1 overflow-hidden mt-1 text-[15px] leading-[1.6] text-[#e0e0e0] font-sans pr-1 tracking-wide font-medium flex flex-col">
+            <AnimatedTypingText text={data.summary} isPos={true} speed={40} className="flex-1 h-full" />
+          </div>
+        </>
       )}
     </div>
   );
@@ -805,7 +710,7 @@ const TopMovers = () => {
   const maxGain = data.gainers.length > 0 ? Math.max(...data.gainers.map(g => parseFloat(g.change))) : 1;
   const maxLoss = data.losers.length > 0 ? Math.max(...data.losers.map(l => Math.abs(parseFloat(l.change)))) : 1;
 
-  const renderBar = (item, isGain, maxVal) => {
+  const renderBar = (item, isGain, maxVal, index = 0) => {
     if (!item) return <div className="flex-1 flex items-center px-3" />;
 
     const change = Math.abs(parseFloat(item.change));
@@ -820,13 +725,22 @@ const TopMovers = () => {
       <div key={item.symbol} className="flex-1 flex flex-col justify-center px-4 relative overflow-hidden group hover:bg-white/[0.04] transition-colors duration-300">
         {/* Fondo de la barra restaurado al 100% del ancho del recuadro */}
         <div
-          className="absolute top-[2px] bottom-[2px] left-0 transition-all duration-1000 ease-out rounded-r-sm shadow-sm"
+          className="absolute top-[2px] bottom-[2px] left-0 transition-all duration-1000 ease-out rounded-r-sm shadow-sm overflow-hidden"
           style={{
             width: `${pct}%`,
             backgroundColor: bgOpacity,
             borderRight: `2px solid ${color}`
           }}
-        />
+        >
+          {/* Luz dinámica que viaja por la barra usando el index para cascadear */}
+          <div
+            className="absolute top-0 bottom-0 left-0 w-[100px] bg-gradient-to-r from-transparent via-white/25 to-transparent mix-blend-overlay blur-[2px]"
+            style={{
+              animation: `shimmer-bar 3s infinite cubic-bezier(0.4, 0, 0.2, 1)`,
+              animationDelay: `${index * 0.2}s`
+            }}
+          />
+        </div>
 
         {/* Contenido (Z-10 para estar sobre la barra) */}
         <div className="relative z-10 flex justify-between items-center w-full h-full">
@@ -835,7 +749,7 @@ const TopMovers = () => {
           </div>
 
           {/* Capa de difuminado (gradient) atrás del texto para que el borde brillante nunca corte visualmente los números */}
-          <div className="absolute right-[-16px] pl-16 pr-4 h-full flex items-center gap-2 bg-gradient-to-l from-[#070707] via-[#070707]/90 to-transparent z-20">
+          <div className="absolute right-[-16px] pl-16 pr-4 h-full flex items-center gap-2 bg-gradient-to-l from-[#151515] via-[#151515]/90 to-transparent z-20">
             <span className="text-[12px] font-mono font-semibold drop-shadow-md" style={{ color: color }}>
               {item.change}%
             </span>
@@ -849,17 +763,25 @@ const TopMovers = () => {
   };
 
   return (
-    <div className="w-full h-full flex bg-[#070707] font-sans shadow-[inset_0_0_40px_rgba(0,0,0,0.8)] border-r border-[#111]">
+    <div className="w-full h-full flex bg-[#151515] font-sans shadow-[inset_0_0_40px_rgba(0,0,0,0.8)] border-r border-[#111]">
+      <style>{`
+        @keyframes shimmer-bar {
+          0% { transform: translateX(-150%) skewX(-20deg); opacity: 0; }
+          20% { opacity: 1; }
+          80% { opacity: 1; }
+          100% { transform: translateX(800%) skewX(-20deg); opacity: 0; }
+        }
+      `}</style>
       {/* Columna Izquierda: Gainers */}
       <div className="flex-1 flex flex-col border-r border-[#1f2329]/50">
-        <div className="h-[24px] flex items-center px-4 border-b border-white/[0.05] bg-gradient-to-b from-white/[0.03] to-transparent">
+        <div className="h-[24px] flex items-center px-2 border-b border-white/[0.05] bg-gradient-to-b from-white/[0.03] to-transparent">
           <span className="text-[9px] tracking-[0.15em] font-bold uppercase opacity-75" style={{ color: '#34d399' }}>Top Gainers</span>
         </div>
         <div className="flex-1 flex flex-col">
           {data.gainers.length > 0
             ? data.gainers.map((item, i) => (
               <div key={`g-${i}`} className={`flex-1 flex border-b border-white/[0.02] ${i === data.gainers.length - 1 ? 'border-b-0' : ''}`}>
-                {renderBar(item, true, maxGain)}
+                {renderBar(item, true, maxGain, i)}
               </div>
             ))
             : <div className="flex-1 flex items-center justify-center text-[10px] text-zinc-600 uppercase tracking-widest animate-pulse">Scanning...</div>
@@ -869,14 +791,14 @@ const TopMovers = () => {
 
       {/* Columna Derecha: Losers */}
       <div className="flex-1 flex flex-col">
-        <div className="h-[24px] flex items-center px-4 border-b border-white/[0.05] bg-gradient-to-b from-white/[0.03] to-transparent">
+        <div className="h-[24px] flex items-center px-2 border-b border-white/[0.05] bg-gradient-to-b from-white/[0.03] to-transparent">
           <span className="text-[9px] tracking-[0.15em] font-bold uppercase opacity-75" style={{ color: '#f87171' }}>Top Losers</span>
         </div>
         <div className="flex-1 flex flex-col">
           {data.losers.length > 0
             ? data.losers.map((item, i) => (
               <div key={`l-${i}`} className={`flex-1 flex border-b border-white/[0.02] ${i === data.losers.length - 1 ? 'border-b-0' : ''}`}>
-                {renderBar(item, false, maxLoss)}
+                {renderBar(item, false, maxLoss, i)}
               </div>
             ))
             : <div className="flex-1 flex items-center justify-center text-[10px] text-zinc-600 uppercase tracking-widest animate-pulse">Scanning...</div>
@@ -950,7 +872,7 @@ const MarketHeatmap = () => {
 
   const renderCell = (item, prefix) => {
     // Elegant cell backgrounds: Deep dark like Widget 2
-    const bgColor = '#0b0c10';
+    const bgColor = '#161616';
 
     if (!item) return <div className="flex-1" style={{ backgroundColor: bgColor }} />;
 
@@ -995,7 +917,7 @@ const MarketHeatmap = () => {
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-[#1f2329] gap-[1px] font-sans shadow-[inset_0_0_20px_rgba(0,0,0,1)]">
+    <div className="w-full h-full flex flex-col bg-[#303030] gap-[1px] font-sans shadow-[inset_0_0_20px_rgba(0,0,0,1)]">
       {/* Fila 1: Commodities */}
       <div className="flex-1 flex w-full gap-[1px]">
         {data.commodities.length > 0 ? data.commodities.map((item) => renderCell(item, 'comm')) : Array(5).fill(0).map((_, i) => renderCell(null, 'comm'))}
@@ -1012,7 +934,7 @@ const MarketHeatmap = () => {
 export default function App() {
   const [currentView, setCurrentView] = useState('LOCAL');      // 'LOCAL' | 'GLOBAL' for W4
   const [currentViewW2, setCurrentViewW2] = useState('TICKERS'); // 'TICKERS' | 'MOVERS' for W2
-  const [currentViewW3, setCurrentViewW3] = useState('NEWS');    // 'NEWS' | 'CALENDAR' for W3
+  const [currentViewW3, setCurrentViewW3] = useState('NEWS');    // 'NEWS' | 'SCOUT' for W3
 
   const [prices, setPrices] = useState([]);
 
@@ -1344,11 +1266,11 @@ export default function App() {
   const neonGlow = `0 0 2px ${sentimentColor}, 0 0 8px ${sentimentColor}, 0 0 15px ${sentimentColor}`;
 
   return (
-    <div className="flex flex-col bg-black overflow-hidden h-screen items-center">
+    <div className="flex flex-col bg-[#111111] overflow-hidden h-screen items-center">
 
       <div className="w-[2048px] relative">
         {/* INTERFAZ DE ANCHO FIJO: 2048px totales */}
-        <div className="w-full h-[192px] bg-black text-white flex overflow-hidden font-mono select-none relative shrink-0">
+        <div className="w-full h-[192px] bg-[#111111] text-white flex overflow-hidden font-mono select-none relative shrink-0">
 
 
 
@@ -1360,7 +1282,7 @@ export default function App() {
           <motion.div
             animate={{ y: isAiActive ? -200 : 0 }}
             transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
-            className="w-[512px] h-full border-r border-[#333] relative shrink-0 overflow-hidden bg-black"
+            className="w-[512px] h-full border-r border-[#333] relative shrink-0 overflow-hidden bg-[#111111]"
           >
             <AnimatePresence mode="wait">
               <motion.div
@@ -1383,7 +1305,7 @@ export default function App() {
           <motion.div
             animate={{ y: isAiActive ? 200 : 0 }}
             transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
-            className="w-[576px] h-full border-r border-white/5 shrink-0 bg-[#070707] flex flex-col shadow-[inset_0_0_40px_rgba(0,0,0,0.8)]">
+            className="w-[576px] h-full border-r border-white/5 shrink-0 bg-[#151515] flex flex-col shadow-[inset_0_0_40px_rgba(0,0,0,0.8)]">
 
             <div className="relative w-full h-full">
               <AnimatePresence mode="wait">
@@ -1596,7 +1518,7 @@ export default function App() {
           <motion.div
             animate={{ y: isAiActive ? -200 : 0 }}
             transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
-            className="w-[384px] h-[192px] border-r border-white/5 shrink-0 bg-[#070707] font-sans overflow-hidden relative shadow-[inset_0_0_40px_rgba(0,0,0,0.8)]"
+            className="w-[384px] h-[192px] border-r border-white/5 shrink-0 bg-[#151515] font-sans overflow-hidden relative shadow-[inset_0_0_40px_rgba(0,0,0,0.8)]"
           >
             <AnimatePresence mode="wait">
               {currentViewW3 === 'NEWS' ? (
@@ -1618,7 +1540,7 @@ export default function App() {
                     </div>
                     <div className="flex items-center gap-1.5 px-3 py-1 rounded-sm bg-red-500/10 border border-red-500/20">
                       <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse"></span>
-                      <span className="text-red-400 text-[8px] font-bold tracking-[0.15em] -translate-y-[0.5px]">LIVE</span>
+                      <span className="text-red-400 text-[8px] font-bold tracking-[0.15em] -translate-y-[1.5px]">LIVE</span>
                     </div>
                   </div>
                   {/* Contenido noticias */}
@@ -1628,28 +1550,17 @@ export default function App() {
                 </motion.div>
               ) : (
                 <motion.div
-                  key="calendar-view"
+                  key="scout-view"
                   initial={{ y: 50, opacity: 0 }}
                   animate={{ y: 0, opacity: 1 }}
                   exit={{ y: -50, opacity: 0 }}
                   transition={{ duration: 0.5, ease: "easeInOut" }}
                   className="absolute inset-0 flex flex-col"
                 >
-                  {/* Header calendario */}
-                  <div className="w-full pl-2 pr-5 py-2.5 border-b border-white/5 bg-gradient-to-b from-white/[0.04] to-transparent flex justify-between items-center z-10 backdrop-blur-md shrink-0">
-                    <div className="flex items-center gap-2">
-                      <svg className="w-3.5 h-3.5 text-zinc-400 -translate-y-[0.5px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                      </svg>
-                      <span className="text-white/80 text-[10px] font-semibold tracking-[0.2em]">ECO CALENDAR</span>
-                    </div>
-                    <span className="text-zinc-600 text-[9px] font-mono tracking-wider">
-                      {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase()}
-                    </span>
-                  </div>
-                  {/* Contenido calendario */}
+                  {/* El header fue removido para dar más espacio al texto */}
+                  {/* Contenido scout */}
                   <div className="flex-1 overflow-hidden relative">
-                    <EconCalendar />
+                    <YahooScoutWidget />
                   </div>
                 </motion.div>
               )}
@@ -1660,7 +1571,7 @@ export default function App() {
           <motion.div
             animate={{ y: isAiActive ? 200 : 0 }}
             transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
-            className="w-[576px] h-full flex items-center justify-center shrink-0 border-l border-r border-gray-900 relative overflow-hidden bg-black"
+            className="w-[576px] h-full flex items-center justify-center shrink-0 border-l border-r border-gray-900 relative overflow-hidden bg-[#111111]"
           >
             <AnimatePresence mode="wait">
               {currentView === 'LOCAL' ? (
@@ -1730,10 +1641,10 @@ export default function App() {
             Headlines
           </button>
           <button
-            onClick={() => setCurrentViewW3('CALENDAR')}
-            className={`px-4 py-1.5 text-[11px] font-bold tracking-widest uppercase rounded-sm transition-all duration-300 ${currentViewW3 === 'CALENDAR' ? 'bg-zinc-800 text-white' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}`}
+            onClick={() => setCurrentViewW3('SCOUT')}
+            className={`px-4 py-1.5 text-[11px] font-bold tracking-widest uppercase rounded-sm transition-all duration-300 ${currentViewW3 === 'SCOUT' ? 'bg-zinc-800 text-white' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}`}
           >
-            Eco Calendar
+            Yahoo Scout
           </button>
         </div>
 
@@ -1758,271 +1669,285 @@ export default function App() {
   );
 }
 
+
+const CLOCK_FLAGS = {
+  'BS AS': '🇦🇷', 'NY': '🇺🇸', 'LONDON': '🇬🇧', 'TOKIO': '🇯🇵', 'BEIJING': '🇨🇳',
+};
+
+const CLOCK_MARKET_HOURS = {
+  'BS AS': { sessions: [[11 * 60, 17 * 60]] },
+  'NY': { sessions: [[9 * 60 + 30, 16 * 60]] },
+  'LONDON': { sessions: [[8 * 60, 16 * 60 + 30]] },
+  'TOKIO': { sessions: [[9 * 60, 11 * 60 + 30], [12 * 60 + 30, 15 * 60 + 30]] },
+  'BEIJING': { sessions: [[9 * 60 + 30, 11 * 60 + 30], [13 * 60, 15 * 60]] },
+};
+
 const Clock = ({ city, zone, time }) => {
   const timeInZone = new Date(time.toLocaleString('en-US', { timeZone: zone }));
   const hrs = timeInZone.getHours();
   const mins = timeInZone.getMinutes();
   const secs = timeInZone.getSeconds();
-  const ms = timeInZone.getMilliseconds();
 
   const hourDeg = (hrs % 12) * 30 + mins * 0.5 + secs * (0.5 / 60);
   const minDeg = mins * 6 + secs * 0.1;
-  const secDeg = secs * 6;
 
-  const MARKET_HOURS = {
-    'BS AS': { sessions: [[11 * 60, 17 * 60]] },
-    'NY': { sessions: [[9 * 60 + 30, 16 * 60]] },
-    'LONDON': { sessions: [[8 * 60, 16 * 60 + 30]] },
-    'TOKIO': { sessions: [[9 * 60, 11 * 60 + 30], [12 * 60 + 30, 15 * 60 + 30]] },
-    'BEIJING': { sessions: [[9 * 60 + 30, 11 * 60 + 30], [13 * 60, 15 * 60]] },
-  };
+  // Accumulated rotation — always increases so CSS transition never animates backwards
+  const prevSecsRef = useRef(secs);
+  const accSecRef = useRef(secs * 6);
+  if (secs !== prevSecsRef.current) {
+    const delta = secs - prevSecsRef.current;
+    accSecRef.current += (delta > 0 ? delta : 60 + delta) * 6;
+    prevSecsRef.current = secs;
+  }
+  const secDeg = accSecRef.current;
 
   const dayOfWeek = timeInZone.getDay();
   const minuteOfDay = hrs * 60 + mins;
-  const schedule = MARKET_HOURS[city];
+  const schedule = CLOCK_MARKET_HOURS[city];
   const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5;
   const isActive = isWeekday && schedule &&
     schedule.sessions.some(([open, close]) => minuteOfDay >= open && minuteOfDay < close);
 
-  // SVG dimensions — larger for more realism
-  const S = 158;
-  const C = S / 2;   // center = 79
-  const R = 68;      // dial radius
+  const sessionProgress = (() => {
+    if (!isActive || !schedule) return null;
+    for (const [open, close] of schedule.sessions) {
+      if (minuteOfDay >= open && minuteOfDay < close)
+        return (minuteOfDay - open) / (close - open);
+    }
+    return null;
+  })();
+
+  const utcOffset = (() => {
+    const utcTime = new Date(time.toLocaleString('en-US', { timeZone: 'UTC' }));
+    const diff = Math.round((timeInZone - utcTime) / 3600000);
+    return diff >= 0 ? `UTC+${diff}` : `UTC${diff}`;
+  })();
+
+  const S = 160;
+  const C = S / 2;
+  const R = 66;
   const uid = city.replace(/\s/g, '');
+  const accent = isActive ? '#00e5a0' : '#ff4455';
 
-  // Arabic numbers at cardinal positions
-  const CARDINALS = { 0: '12', 3: '3', 6: '6', 9: '9' };
+  const sessionArcPath = (() => {
+    const pct = sessionProgress;
+    if (!pct || pct <= 0) return null;
+    const p = Math.min(pct, 0.9999);
+    const toRad = a => a * Math.PI / 180;
+    const r = R + 7;
+    const x1 = C + r * Math.cos(toRad(-90));
+    const y1 = C + r * Math.sin(toRad(-90));
+    const endA = -90 + p * 360;
+    const x2 = C + r * Math.cos(toRad(endA));
+    const y2 = C + r * Math.sin(toRad(endA));
+    return `M ${x1} ${y1} A ${r} ${r} 0 ${p > 0.5 ? 1 : 0} 1 ${x2} ${y2}`;
+  })();
 
-  // 60 minute indices
-  const indices = Array.from({ length: 60 }, (_, i) => {
-    const a = (i * 6 - 90) * (Math.PI / 180);
-    const isHour = i % 5 === 0;
-    const isCardinal = i % 15 === 0;
-    const outerR = R - 1;
-    const innerR = isCardinal ? R - 12 : isHour ? R - 8 : R - 5;
+  const hourMarkers = Array.from({ length: 12 }, (_, i) => {
+    const a = (i * 30 - 90) * (Math.PI / 180);
+    const isCard = i % 3 === 0;
+    const outerR = R - 3;
+    const len = isCard ? 10 : 8;
     return {
-      x1: C + outerR * Math.cos(a),
-      y1: C + outerR * Math.sin(a),
-      x2: C + innerR * Math.cos(a),
-      y2: C + innerR * Math.sin(a),
-      w: isCardinal ? 3 : isHour ? 1.8 : 0.9,
-      color: isCardinal ? '#e8e8e8' : isHour ? '#aaa' : '#555',
-      isCardinal,
-      isHour,
-      idx: i,
+      x1: C + outerR * Math.cos(a), y1: C + outerR * Math.sin(a),
+      x2: C + (outerR - len) * Math.cos(a), y2: C + (outerR - len) * Math.sin(a),
+      w: isCard ? 2.6 : 2.2, color: isCard ? '#cccccc' : '#686868', idx: i,
     };
   });
 
-  // Hour-hand path (lancet shape)
+  const minuteDots = Array.from({ length: 60 }, (_, i) => {
+    if (i % 5 === 0) return null;
+    const a = (i * 6 - 90) * (Math.PI / 180);
+    const r = R - 5;
+    return { x: C + r * Math.cos(a), y: C + r * Math.sin(a), idx: i };
+  }).filter(Boolean);
+
   const buildHourHand = () => {
-    const L = 32, W = 6, tail = 8;
-    // points relative to center, pointing up
-    return `M ${C} ${C + tail} L ${C - W / 2} ${C - L * 0.3} L ${C} ${C - L} L ${C + W / 2} ${C - L * 0.3} Z`;
-  };
-  // Minute-hand path (longer lancet)
-  const buildMinHand = () => {
-    const L = 50, W = 4.5, tail = 9;
-    return `M ${C} ${C + tail} L ${C - W / 2} ${C - L * 0.25} L ${C} ${C - L} L ${C + W / 2} ${C - L * 0.25} Z`;
+    const L = 29, W = 7.5, tail = 8;
+    return `M ${C} ${C + tail} L ${C - W / 2} ${C - L * 0.28} L ${C - 1} ${C - L} L ${C + 1} ${C - L} L ${C + W / 2} ${C - L * 0.28} Z`;
   };
 
-  const marketColor = isActive ? '#4ade80' : '#ef4444';
-  const marketGlow = isActive ? '#22c55e' : '#dc2626';
+  const buildMinHand = () => {
+    const L = 50, W = 5.5, tail = 10;
+    return `M ${C} ${C + tail} L ${C - W / 2} ${C - L * 0.2} L ${C - 0.8} ${C - L} L ${C + 0.8} ${C - L} L ${C + W / 2} ${C - L * 0.2} Z`;
+  };
 
   return (
-    <div className="flex flex-col items-center gap-[4px] relative z-10">
+    <div className="flex flex-col items-center relative z-10" style={{ width: '108px' }}>
 
-      {/* SVG watchface — rendered smaller so 5 clocks fit in 640px */}
-      <svg width={100} height={100} viewBox={`0 0 ${S} ${S}`} style={{ overflow: 'visible' }}>
+      {/* ── CITY HEADER ── */}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: '5px', marginBottom: '4px' }}>
+        <span style={{ fontSize: '14px', lineHeight: 1 }}>{CLOCK_FLAGS[city] || '🌐'}</span>
+        <span style={{
+          fontSize: '10px', fontWeight: 800, letterSpacing: '0.22em',
+          color: '#aaa', textTransform: 'uppercase', fontFamily: 'sans-serif',
+        }}>{city}</span>
+      </div>
+
+      {/* ── SVG CLOCK FACE ── */}
+      <svg width={108} height={108} viewBox={`0 0 ${S} ${S}`} style={{ transform: 'translateZ(0)' }}>
         <defs>
-          {/* Esfera negra profunda */}
-          <radialGradient id={`dial-${uid}`} cx="38%" cy="32%" r="70%">
-            <stop offset="0%" stopColor="#2a2a2e" />
-            <stop offset="55%" stopColor="#111114" />
-            <stop offset="100%" stopColor="#080809" />
+          <radialGradient id={`dial-${uid}`} cx="35%" cy="28%" r="75%">
+            <stop offset="0%" stopColor="#181c2e" />
+            <stop offset="45%" stopColor="#0c0e18" />
+            <stop offset="100%" stopColor="#060608" />
           </radialGradient>
-
-          {/* Bisel metálico — aluminio cepillado */}
-          <radialGradient id={`bezel-${uid}`} cx="30%" cy="25%" r="80%">
-            <stop offset="0%" stopColor="#9a9a9a" />
-            <stop offset="20%" stopColor="#5c5c5c" />
-            <stop offset="50%" stopColor="#3a3a3a" />
-            <stop offset="75%" stopColor="#6b6b6b" />
-            <stop offset="100%" stopColor="#2a2a2a" />
+          <radialGradient id={`bezel-${uid}`} cx="22%" cy="18%" r="85%">
+            <stop offset="0%" stopColor="#9c9c9c" />
+            <stop offset="22%" stopColor="#505050" />
+            <stop offset="52%" stopColor="#2d2d2d" />
+            <stop offset="78%" stopColor="#585858" />
+            <stop offset="100%" stopColor="#1c1c1c" />
           </radialGradient>
-
-          {/* Reflejo de cristal zafiro */}
-          <radialGradient id={`glass-${uid}`} cx="35%" cy="20%" r="65%">
-            <stop offset="0%" stopColor="rgba(255,255,255,0.18)" />
-            <stop offset="40%" stopColor="rgba(255,255,255,0.04)" />
-            <stop offset="100%" stopColor="rgba(255,255,255,0)" />
+          <radialGradient id={`glass-${uid}`} cx="28%" cy="15%" r="65%">
+            <stop offset="0%" stopColor="rgba(255,255,255,0.14)" />
+            <stop offset="40%" stopColor="rgba(255,255,255,0.02)" />
+            <stop offset="100%" stopColor="rgba(0,0,0,0)" />
           </radialGradient>
-
-          {/* Gradiente de aguja de horas */}
-          <linearGradient id={`hhand-${uid}`} x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor="#d4d4d4" />
-            <stop offset="40%" stopColor="#f5f5f5" />
-            <stop offset="100%" stopColor="#888" />
-          </linearGradient>
-
-          {/* Gradiente de aguja de minutos */}
-          <linearGradient id={`mhand-${uid}`} x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor="#c8c8c8" />
-            <stop offset="45%" stopColor="#f0f0f0" />
-            <stop offset="100%" stopColor="#777" />
-          </linearGradient>
-
-          {/* Glow del segundero */}
-          <filter id={`secglow-${uid}`} x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="1.5" result="b" />
-            <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
-          </filter>
-
-          {/* Sombra de agujas */}
-          <filter id={`handshadow-${uid}`} x="-30%" y="-30%" width="160%" height="160%">
-            <feDropShadow dx="1" dy="2" stdDeviation="2" floodColor="#000" floodOpacity="0.7" />
-          </filter>
-
-          {/* Pivote plateado */}
-          <radialGradient id={`pivot-${uid}`} cx="35%" cy="30%" r="65%">
+          <radialGradient id={`pivot-${uid}`} cx="30%" cy="22%" r="65%">
             <stop offset="0%" stopColor="#ffffff" />
-            <stop offset="40%" stopColor="#c0c0c0" />
-            <stop offset="100%" stopColor="#505050" />
+            <stop offset="40%" stopColor="#c8c8c8" />
+            <stop offset="100%" stopColor="#3a3a3a" />
           </radialGradient>
-
-          {/* Market ring glow */}
-          <filter id={`mktglow-${uid}`} x="-10%" y="-10%" width="120%" height="120%">
+          <filter id={`aglow-${uid}`} x="-60%" y="-60%" width="220%" height="220%">
             <feGaussianBlur stdDeviation="2.5" result="b" />
             <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
           </filter>
+          <filter id={`oglow-${uid}`} x="-30%" y="-30%" width="160%" height="160%">
+            <feGaussianBlur stdDeviation="5" result="b" />
+            <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
+          </filter>
+          <filter id={`hshadow-${uid}`} x="-40%" y="-40%" width="180%" height="180%">
+            <feDropShadow dx="1.5" dy="2" stdDeviation="2.5" floodColor="#000" floodOpacity="0.85" />
+          </filter>
         </defs>
 
-        {/* ── SOMBRA EXTERIOR DEL RELOJ ── */}
-        <circle cx={C} cy={C} r={R + 10} fill="none" stroke="rgba(0,0,0,0.6)" strokeWidth="6" />
+        {/* Ambient outer glow when open */}
+        {isActive && (
+          <circle cx={C} cy={C} r={R + 16}
+            fill="none" stroke={accent} strokeWidth="2"
+            opacity="0.2" filter={`url(#oglow-${uid})`}
+          />
+        )}
 
-        {/* ── BISEL EXTERIOR (metálico) ── */}
-        <circle cx={C} cy={C} r={R + 9} fill={`url(#bezel-${uid})`} />
+        {/* Bezel */}
+        <circle cx={C} cy={C} r={R + 11} fill={`url(#bezel-${uid})`} />
 
-        {/* ── ANILLO DE MERCADO (activo = verde / cerrado = rojo) ── */}
-        <circle
-          cx={C} cy={C} r={R + 5}
-          fill="none"
-          stroke={marketColor}
-          strokeWidth="1.5"
-          opacity={isActive ? 0.7 : 0.35}
-          filter={isActive ? `url(#mktglow-${uid})` : undefined}
+        {/* Session track (full ring, dim) */}
+        <circle cx={C} cy={C} r={R + 7}
+          fill="none" stroke={accent}
+          strokeWidth="2" opacity={isActive ? 0.12 : 0.08}
         />
 
-        {/* ── ESFERA PRINCIPAL ── */}
+        {/* Session progress arc */}
+        {sessionArcPath && (
+          <path d={sessionArcPath}
+            fill="none" stroke={accent} strokeWidth="2.5"
+            strokeLinecap="round" opacity="0.9"
+            filter={`url(#aglow-${uid})`}
+          />
+        )}
+
+        {/* Dial */}
         <circle cx={C} cy={C} r={R + 2} fill={`url(#dial-${uid})`} />
+        <circle cx={C} cy={C} r={R + 2} fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="1" />
 
-        {/* ── TEXTURA FINA GUILLOCHE (líneas concéntricas sutiles) ── */}
-        {[0.85, 0.65, 0.45].map((factor, fi) => (
-          <circle key={fi}
-            cx={C} cy={C} r={R * factor}
-            fill="none" stroke="rgba(255,255,255,0.03)" strokeWidth="0.5"
+        {/* Minute dots */}
+        {minuteDots.map(({ x, y, idx }) => (
+          <circle key={idx} cx={x} cy={y} r="0.9" fill="#323232" />
+        ))}
+
+        {/* Hour markers */}
+        {hourMarkers.map(({ x1, y1, x2, y2, w, color, idx }) => (
+          <line key={idx} x1={x1} y1={y1} x2={x2} y2={y2}
+            stroke={color} strokeWidth={w} strokeLinecap="square"
           />
         ))}
 
-        {/* ── ÍNDICES DE MINUTOS Y HORAS ── */}
-        {indices.map((idx) => (
-          <line key={idx.idx}
-            x1={idx.x1} y1={idx.y1} x2={idx.x2} y2={idx.y2}
-            stroke={idx.color} strokeWidth={idx.w} strokeLinecap="round"
+        {/* Hour hand */}
+        <g
+          style={{
+            transform: `rotate(${hourDeg}deg)`,
+            transformOrigin: `${C}px ${C}px`,
+            transition: 'transform 0.4s ease-out',
+          }}
+          filter={`url(#hshadow-${uid})`}
+        >
+          <path d={buildHourHand()} fill="#e0e0e0" />
+          <path d={`M ${C} ${C - 7} L ${C} ${C - 26}`}
+            stroke="rgba(255,255,200,0.65)" strokeWidth="1.8" strokeLinecap="round"
           />
-        ))}
-
-        {/* ── NÚMEROS ARÁBIGOS en cardinales (Removidos) ── */}
-        {/*
-        {[0, 3, 6, 9].map((i) => {
-          const a = (i * 30 - 90) * (Math.PI / 180);
-          const textR = R - 13;
-          return (
-            <text
-              key={i}
-              x={C + textR * Math.cos(a)}
-              y={C + textR * Math.sin(a)}
-              textAnchor="middle"
-              dominantBaseline="central"
-              fill="#cccccc"
-              fontSize="9"
-              fontFamily="'JetBrains Mono', 'Courier New', monospace"
-              fontWeight="bold"
-             >
-              {CARDINALS[i]}
-            </text>
-          );
-        })}
-        */}
-
-        {/* ── AGUJA DE HORAS ── */}
-        <g transform={`rotate(${hourDeg} ${C} ${C})`} filter={`url(#handshadow-${uid})`}>
-          <path d={buildHourHand()} fill={`url(#hhand-${uid})`} stroke="#555" strokeWidth="0.4" />
-          {/* borde reflectante superior */}
-          <path d={buildHourHand()} fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="0.6" />
         </g>
 
-        {/* ── AGUJA DE MINUTOS ── */}
-        <g transform={`rotate(${minDeg} ${C} ${C})`} filter={`url(#handshadow-${uid})`}>
-          <path d={buildMinHand()} fill={`url(#mhand-${uid})`} stroke="#555" strokeWidth="0.4" />
-          <path d={buildMinHand()} fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="0.5" />
+        {/* Minute hand */}
+        <g
+          style={{
+            transform: `rotate(${minDeg}deg)`,
+            transformOrigin: `${C}px ${C}px`,
+            transition: 'transform 0.4s ease-out',
+          }}
+          filter={`url(#hshadow-${uid})`}
+        >
+          <path d={buildMinHand()} fill="#d0d0d0" />
+          <path d={`M ${C} ${C - 10} L ${C} ${C - 47}`}
+            stroke="rgba(255,255,200,0.5)" strokeWidth="1.4" strokeLinecap="round"
+          />
         </g>
 
-        {/* ── SEGUNDERO (rojo rallye) ── */}
-        <g transform={`rotate(${secDeg} ${C} ${C})`} filter={`url(#secglow-${uid})`}>
-          {/* Cola de contrapeso */}
-          <line x1={C} y1={C + 14} x2={C} y2={C + 3}
-            stroke="#cc2200" strokeWidth="3" strokeLinecap="round" />
-          {/* Cuerpo principal */}
-          <line x1={C} y1={C + 3} x2={C} y2={C - 55}
-            stroke="#ff3a1a" strokeWidth="1.1" strokeLinecap="round" />
-          {/* Punta blanca de precisión */}
-          <line x1={C} y1={C - 48} x2={C} y2={C - 55}
-            stroke="#ffffff" strokeWidth="1.1" strokeLinecap="round" opacity="0.85" />
-          {/* Pastilla de contrapeso */}
-          <ellipse cx={C} cy={C + 10} rx="3.5" ry="2" fill="#cc2200" />
+        {/* Second hand */}
+        <g
+          style={{
+            transform: `rotate(${secDeg}deg)`,
+            transformOrigin: `${C}px ${C}px`,
+            transition: 'transform 0.3s cubic-bezier(0.4, 2.08, 0.55, 0.44)',
+          }}
+        >
+          <line x1={C} y1={C + 17} x2={C} y2={C + 5}
+            stroke="#bb1e00" strokeWidth="3.5" strokeLinecap="round" />
+          <line x1={C} y1={C + 5} x2={C} y2={C - 56}
+            stroke={accent} strokeWidth="1.1" strokeLinecap="round" />
+          <circle cx={C} cy={C + 13} r="4.5" fill="#bb1e00" />
         </g>
 
-        {/* ── PIVOTE CENTRAL (tornillo plateado) ── */}
-        <circle cx={C} cy={C} r="5.5" fill={`url(#pivot-${uid})`} stroke="#333" strokeWidth="0.5" />
-        <circle cx={C} cy={C} r="2" fill="#1a1a1a" />
-        {/* Ranura del tornillo */}
-        <line x1={C - 1.8} y1={C} x2={C + 1.8} y2={C} stroke="#555" strokeWidth="0.7" />
+        {/* Center pivot */}
+        <circle cx={C} cy={C} r="6.5" fill={`url(#pivot-${uid})`} stroke="#1a1a1a" strokeWidth="0.8" />
+        <circle cx={C} cy={C} r="2.5" fill="#0a0a0a" />
 
-        {/* ── REFLEXIÓN CRISTAL ZAFIRO ── */}
+        {/* Sapphire crystal reflection */}
         <circle cx={C} cy={C} r={R + 2} fill={`url(#glass-${uid})`} />
-
-        {/* Borde interno del cristal */}
-        <circle cx={C} cy={C} r={R + 2} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="0.8" />
+        <circle cx={C} cy={C} r={R + 2} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="0.8" />
       </svg>
 
-      {/* Ciudad + indicador de mercado */}
-      <div className="flex items-center gap-2">
-        <div
-          className="w-[6px] h-[6px] rounded-full"
-          style={{
-            backgroundColor: isActive ? '#4ade80' : '#ef4444',
-            boxShadow: isActive
-              ? '0 0 6px #4ade80, 0 0 2px #22c55e'
-              : '0 0 4px #ef4444, 0 0 1px #dc2626',
-          }}
-        />
-        <span className="text-[12px] font-bold uppercase tracking-[0.18em]"
-          style={{ color: '#888' }}>{city}</span>
-      </div>
-
-      {/* Hora digital — monoespaciada refinada */}
-      <span
-        className="text-[15px] font-mono font-semibold leading-none"
-        style={{
-          fontVariantNumeric: 'tabular-nums',
-          color: '#c0c0c0',
-          letterSpacing: '0.05em',
-        }}
-      >
+      {/* Digital time */}
+      <span style={{
+        fontSize: '14px',
+        fontFamily: "'SF Mono', 'JetBrains Mono', 'Courier New', monospace",
+        fontWeight: 600, color: '#cccccc', letterSpacing: '0.04em',
+        fontVariantNumeric: 'tabular-nums', marginTop: '4px', lineHeight: 1,
+        transform: 'translateY(6px) translateZ(0)', WebkitFontSmoothing: 'antialiased'
+      }}>
         {timeInZone.toLocaleTimeString('en-US', {
-          hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit'
+          hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit',
         })}
       </span>
+
+      {/* Market status + UTC offset */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '3px', transform: 'translateY(6px) translateZ(0)', WebkitFontSmoothing: 'antialiased' }}>
+        <div style={{
+          width: '5px', height: '5px', borderRadius: '50%',
+          backgroundColor: accent,
+          boxShadow: `0 0 ${isActive ? '7px' : '4px'} ${accent}`,
+        }} />
+        <span style={{
+          fontSize: '8px', fontWeight: 700, letterSpacing: '0.18em',
+          color: accent, textTransform: 'uppercase', fontFamily: 'sans-serif',
+        }}>
+          {isActive ? 'OPEN' : 'CLOSED'}
+        </span>
+        <span style={{ fontSize: '7px', color: '#ffffff', fontFamily: 'monospace', letterSpacing: '0.04em' }}>
+          {utcOffset}
+        </span>
+      </div>
     </div>
   );
 };

@@ -240,21 +240,19 @@ COMPANY_CACHE_TTL = 600  # 10 minutos
 
 def fetch_ticker_data(t):
     try:
-        asset = yf.Ticker(t)
-        hist = asset.history(period="2d")
-        if len(hist) < 2:
-            price = asset.info.get('regularMarketPrice', 0)
-            change_pct = 0.0
-            change_abs = 0.0
+        fi = yf.Ticker(t).fast_info
+        price      = fi.last_price or 0
+        prev_close = fi.previous_close or 0
+
+        if price and prev_close:
+            change_abs = price - prev_close
+            change_pct = (change_abs / prev_close) * 100
         else:
-            last_close = hist['Close'].iloc[-2]
-            current_price = hist['Close'].iloc[-1]
-            price = current_price
-            change_abs = current_price - last_close
-            change_pct = (change_abs / last_close) * 100
-        
+            change_abs = 0.0
+            change_pct = 0.0
+
         return {
-            "symbol": t.replace("^", ""), 
+            "symbol": t.replace("^", ""),
             "price": f"{price:.2f}",
             "change": f"{change_pct:+.2f}",
             "change_abs": f"{change_abs:+.2f}"
@@ -870,6 +868,21 @@ async def force_econ_calendar_refresh():
     _econ_calendar = {"events": [], "date": None}
     await scrape_econ_calendar()
     return {"ok": True, "events": len(_econ_calendar["events"]), "date": _econ_calendar["date"]}
+
+
+# --- YAHOO SCOUT WIDGET ENDPOINT ---
+@app.get("/api/scout/{ticker}")
+async def get_scout_data(ticker: str):
+    data = await fetch_company_data(ticker)
+    
+    if data:
+        return {
+            "ticker": data.get("ticker", ticker),
+            "name": data.get("name", ticker),
+            "summary": data.get("scout_summary")
+        }
+    
+    return {"error": "No data found"}
 
 
 @app.get("/api/market-news")
