@@ -3,6 +3,7 @@ uvicorn
 yfinance
 beautifulsoup4
 requests
+curl-cffi
 google-genai
 edge-tts
 httpx

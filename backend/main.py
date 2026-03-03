@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import yfinance as yf
 import datetime
 import requests
+from curl_cffi import requests as cffi_requests
 import pandas as pd
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
@@ -736,13 +737,8 @@ async def scrape_econ_calendar():
     COUNTRY_IDS = ["5", "72", "35", "37", "32", "29"]
 
     def do_scrape():
-        session = requests.Session()
+        session = cffi_requests.Session(impersonate="chrome124")
         session.headers.update({
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
             "Accept": "text/plain, */*; q=0.01",
             "Accept-Language": "en-US,en;q=0.9",
             "X-Requested-With": "XMLHttpRequest",
@@ -845,8 +841,11 @@ async def scrape_econ_calendar():
         events = await asyncio.to_thread(do_scrape)
         if events is not None:
             _econ_calendar = {"events": events, "date": today_str}
+        else:
+            _econ_calendar = {"events": [], "date": today_str}
     except Exception as e:
         print(f"❌ Error scrapeando investing.com: {e}")
+        _econ_calendar = {"events": [], "date": today_str}
 
 
 async def econ_calendar_refresh_loop():
