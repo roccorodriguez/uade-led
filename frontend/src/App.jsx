@@ -152,7 +152,7 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
           setLabelAnim('enter');
 
           // 3. PAUSA de visualización
-          await new Promise(r => setTimeout(r, 5000));
+          await new Promise(r => setTimeout(r, 3500));
           if (cancelled) return;
 
           // 4. SALIDA: barrido inverso de la etiqueta
@@ -169,7 +169,7 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
           setScalesOpacity(0);
 
           // 7. ESPERA FINAL: Completar animaciones
-          await new Promise(r => setTimeout(r, 1500));
+          await new Promise(r => setTimeout(r, 500));
           if (cancelled) return;
           onCycleComplete();
         } else {
@@ -715,7 +715,7 @@ const TopMovers = () => {
 
     const change = Math.abs(parseFloat(item.change));
     // Calculamos el % de la barra relativo al máximo de ese lado (min 5% para que se vea algo)
-    const pct = Math.max(2, (change / (maxVal || 1)) * 100);
+    const pct = Math.min(100, Math.max(2, (change / (maxVal || 1)) * 100));
 
     // Tonalidades idénticas al Widget 4, pero con un color de fondo más denso para que "llene" más
     const color = isGain ? '#34d399' : '#f87171';
