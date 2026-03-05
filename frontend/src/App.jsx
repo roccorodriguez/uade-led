@@ -707,7 +707,7 @@ const TopMovers = () => {
   }, []);
 
   // Calcular max cambios para magnitud relativa
-  const maxGain = data.gainers.length > 0 ? Math.max(...data.gainers.map(g => parseFloat(g.change))) : 1;
+  const maxGain = data.gainers.length > 0 ? Math.max(...data.gainers.map(g => Math.abs(parseFloat(g.change)))) : 1;
   const maxLoss = data.losers.length > 0 ? Math.max(...data.losers.map(l => Math.abs(parseFloat(l.change)))) : 1;
 
   const renderBar = (item, isGain, maxVal, index = 0) => {
@@ -821,13 +821,13 @@ const MarketHeatmap = () => {
         const res = await fetch(`${API_BASE}/api/market-heatmap`);
         const result = await res.json();
 
-        if (active) {
+        if (active && result && result.commodities && result.indices) {
           setData(prev => {
             // Check for flashes
             const newFlash = { ...flashMap };
 
             const checkFlashes = (newItems, oldItems, prefix) => {
-              if (!oldItems) return;
+              if (!newItems || !oldItems) return;
               newItems.forEach((item, i) => {
                 const oldItem = oldItems[i];
                 if (oldItem && item.price !== oldItem.price) {
@@ -918,14 +918,20 @@ const MarketHeatmap = () => {
 
   return (
     <div className="w-full h-full flex flex-col bg-[#303030] gap-[1px] font-sans shadow-[inset_0_0_20px_rgba(0,0,0,1)]">
-      {/* Fila 1: Commodities */}
-      <div className="flex-1 flex w-full gap-[1px]">
-        {data.commodities.length > 0 ? data.commodities.map((item) => renderCell(item, 'comm')) : Array(5).fill(0).map((_, i) => renderCell(null, 'comm'))}
-      </div>
-      {/* Fila 2: Indices */}
-      <div className="flex-1 flex w-full gap-[1px]">
-        {data.indices.length > 0 ? data.indices.map((item) => renderCell(item, 'idx')) : Array(5).fill(0).map((_, i) => renderCell(null, 'idx'))}
-      </div>
+      {data.commodities.length === 0 && data.indices.length === 0 ? (
+        <div className="flex-1 flex items-center justify-center text-[10px] text-zinc-600 uppercase tracking-widest animate-pulse h-full bg-[#151515]">Scanning global markets...</div>
+      ) : (
+        <>
+          {/* Fila 1: Commodities */}
+          <div className="flex-1 flex w-full gap-[1px]">
+            {data.commodities.length > 0 ? data.commodities.map((item) => renderCell(item, 'comm')) : Array(5).fill(0).map((_, i) => renderCell(null, 'comm'))}
+          </div>
+          {/* Fila 2: Indices */}
+          <div className="flex-1 flex w-full gap-[1px]">
+            {data.indices.length > 0 ? data.indices.map((item) => renderCell(item, 'idx')) : Array(5).fill(0).map((_, i) => renderCell(null, 'idx'))}
+          </div>
+        </>
+      )}
     </div>
   );
 };
