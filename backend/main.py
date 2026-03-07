@@ -27,13 +27,16 @@ ssl._create_default_https_context = ssl._create_unverified_context
 
 # --- INICIALIZACIÓN DE ROFEX ---
 try:
+    env_str = os.environ.get("PYROFEX_ENVIRONMENT", "REMARKET")
+    rofex_env = pyRofex.Environment.LIVE if env_str.upper() == "LIVE" else pyRofex.Environment.REMARKET
+
     pyRofex.initialize(
         user=os.environ.get("PYROFEX_USER"),
         password=os.environ.get("PYROFEX_PASSWORD"),
         account=os.environ.get("PYROFEX_ACCOUNT"),
-        environment=pyRofex.Environment.REMARKET
+        environment=rofex_env
     )
-    print("✅ PyRofex Inicializado correctamente en REMARKET")
+    print(f"✅ PyRofex Inicializado correctamente en {env_str}")
 except Exception as e:
     print(f"❌ Error al inicializar PyRofex: {e}")
 
@@ -179,16 +182,38 @@ ROFEX_INSTRUMENTS = [
     "PAMP - 48hs", "YPFD - 48hs", "TECO2 - 48hs", "LOMA - 48hs"
 ]
 
+async def scout_prewarm_loop():
+    """Pre-calienta y mantiene fresco el caché de scout para todos los tickers de rotación."""
+    ROTATION = ["NVDA", "MSFT", "GOOG", "META", "TSLA", "AMZN", "AAPL"]
+    await asyncio.sleep(5)  # Pequeña pausa al arrancar
+    while True:
+        print("🔥 Pre-calentando caché de scout...")
+        for ticker in ROTATION:
+            try:
+                await fetch_company_data(ticker)
+                print(f"✅ Scout caché listo: {ticker}")
+            except Exception as e:
+                print(f"⚠️ Error pre-calentando {ticker}: {e}")
+            await asyncio.sleep(3)  # 3s entre tickers
+        await asyncio.sleep(COMPANY_CACHE_TTL - 60)  # Refrescar 60s antes de que expire
+
+
 @app.on_event("startup")
 async def startup_event():
     # Guardamos el loop para que pyRofex pueda encolar corrutinas (broadcast)
     app.state.loop = asyncio.get_running_loop()
-    
+
     # Iniciar scraper periódico de Top Movers (cada 20 min)
     asyncio.create_task(movers_refresh_loop())
 
     # Iniciar scraper diario del Calendario Económico (investing.com)
     asyncio.create_task(econ_calendar_refresh_loop())
+
+    # Pre-calentar caché de scout para todos los tickers de rotación
+    asyncio.create_task(scout_prewarm_loop())
+
+    # Mantener caché de market-heatmap actualizado
+    asyncio.create_task(heatmap_refresh_loop())
 
     # Iniciar WebSocket de PyRofex
     try:
@@ -240,9 +265,17 @@ COMPANY_CACHE_TTL = 600  # 10 minutos
 
 def fetch_ticker_data(t):
     try:
-        fi = yf.Ticker(t).fast_info
-        price      = fi.last_price or 0
-        prev_close = fi.previous_close or 0
+        t_obj = yf.Ticker(t)
+        try:
+            info = t_obj.info
+            price = info.get('currentPrice') or info.get('regularMarketPrice')
+            prev_close = info.get('regularMarketPreviousClose') or info.get('previousClose')
+            if price is None or prev_close is None:
+                raise ValueError("Missing data in info")
+        except:
+            fi = t_obj.fast_info
+            price      = getattr(fi, 'last_price', None) or 0
+            prev_close = getattr(fi, 'regular_market_previous_close', None) or getattr(fi, 'previous_close', None) or 0
 
         if price and prev_close:
             change_abs = price - prev_close
@@ -616,42 +649,57 @@ async def get_prices():
     }
 
 # 3. Endpoint para Heatmap (Widget 4 Alternativo)
-@app.get("/api/market-heatmap")
-async def get_market_heatmap():
-    commodities = ["CL=F", "GC=F", "SI=F", "HG=F", "ZS=F"] # WTI, Gold, Silver, Copper, Soybeans
-    indices = ["^GSPC", "^DJI", "^IXIC", "^VIX", "^MERV"]  # S&P500, Dow, NASDAQ, VIX, Merval
-    
-    # Mapeo de nombres limpios para la UI
-    name_map = {
-        "CL=F": "WTI CRUDE", "GC=F": "GOLD", "SI=F": "SILVER", "HG=F": "COPPER", "ZS=F": "SOYBEANS",
-        "^GSPC": "S&P 500", "^DJI": "DOW JONES", "^IXIC": "NASDAQ", "^VIX": "VIX", "^MERV": "MERVAL"
-    }
+_HEATMAP_TICKERS = {
+    "commodities": ["CL=F", "GC=F", "SI=F", "HG=F", "ZS=F"],
+    "indices": ["^GSPC", "^DJI", "^IXIC", "^VIX", "^MERV"],
+}
+_HEATMAP_NAME_MAP = {
+    "CL=F": "PETRÓLEO WTI", "GC=F": "ORO", "SI=F": "PLATA", "HG=F": "COBRE", "ZS=F": "SOJA",
+    "^GSPC": "S&P 500", "^DJI": "DOW JONES", "^IXIC": "NASDAQ", "^VIX": "VIX", "^MERV": "MERVAL"
+}
+_heatmap_cache = {"data": None, "ts": 0}
+HEATMAP_CACHE_TTL = 30  # segundos
 
-    # Función interna para procesar la lista en paralelo
+
+async def _refresh_heatmap_cache():
     def fetch_group(tickers):
         results = []
         for t in tickers:
-            data = fetch_ticker_data(t)
-            # Agregar el nombre limpio
-            data['name'] = name_map.get(t, data['symbol'])
-            results.append(data)
+            d = fetch_ticker_data(t)
+            d['name'] = _HEATMAP_NAME_MAP.get(t, d['symbol'])
+            results.append(d)
         return results
 
-    # Fetch paralelo (Commodities y luego Índices)
-    comm_task = asyncio.to_thread(fetch_group, commodities)
-    idx_task = asyncio.to_thread(fetch_group, indices)
-    
-    comp_results, idx_results = await asyncio.gather(comm_task, idx_task)
+    comm_task = asyncio.to_thread(fetch_group, _HEATMAP_TICKERS["commodities"])
+    idx_task = asyncio.to_thread(fetch_group, _HEATMAP_TICKERS["indices"])
+    comm_results, idx_results = await asyncio.gather(comm_task, idx_task)
+    _heatmap_cache["data"] = {"commodities": comm_results, "indices": idx_results}
+    _heatmap_cache["ts"] = time.time()
 
-    return {
-        "commodities": comp_results,
-        "indices": idx_results
-    }
+
+async def heatmap_refresh_loop():
+    """Mantiene el caché de market-heatmap actualizado cada 30s."""
+    await _refresh_heatmap_cache()
+    while True:
+        await asyncio.sleep(HEATMAP_CACHE_TTL)
+        await _refresh_heatmap_cache()
+
+
+@app.get("/api/market-heatmap")
+async def get_market_heatmap():
+    if _heatmap_cache["data"] and time.time() - _heatmap_cache["ts"] < HEATMAP_CACHE_TTL:
+        return _heatmap_cache["data"]
+    await _refresh_heatmap_cache()
+    return _heatmap_cache["data"]
 
 # --- TOP MOVERS: caché de tickers scrapeados de Yahoo Finance ---
 # Se actualiza cada 20 minutos vía background task
 _movers_tickers = {"gainers": [], "losers": [], "last_scraped": 0}
 TOP_MOVERS_REFRESH_INTERVAL = 20 * 60  # segundos
+
+# Caché de la respuesta completa de top-movers (precios ya fetcheados)
+_movers_response_cache = {"data": None, "ts": 0}
+MOVERS_RESPONSE_CACHE_TTL = 180  # 3 minutos
 
 async def scrape_movers_tickers():
     """Scrapea Yahoo Finance (screener API) para obtener top 5 gainers y losers del día.
@@ -690,36 +738,59 @@ async def scrape_movers_tickers():
     else:
         print("⚠️ Scraping de Top Movers sin resultados, se mantiene caché anterior")
 
+async def _fetch_and_cache_movers():
+    """Fetchea precios en vivo para los tickers cacheados y guarda la respuesta completa."""
+    global _movers_response_cache
+    gainers_syms = _movers_tickers["gainers"]
+    losers_syms = _movers_tickers["losers"]
+    if not gainers_syms and not losers_syms:
+        return
+    all_syms = gainers_syms + losers_syms
+    tasks = [asyncio.to_thread(fetch_ticker_data, s) for s in all_syms]
+    all_results = await asyncio.gather(*tasks)
+    _movers_response_cache = {
+        "data": {
+            "gainers": list(all_results[:len(gainers_syms)]),
+            "losers": list(all_results[len(gainers_syms):]),
+        },
+        "ts": time.time(),
+    }
+
+
 async def movers_refresh_loop():
-    """Background task: refresca los tickers de Top Movers cada 20 minutos."""
-    await scrape_movers_tickers()  # ejecución inmediata al iniciar
+    """Background task: refresca los tickers de Top Movers cada 20 minutos
+    y pre-cachea la respuesta completa cada 3 minutos."""
+    await scrape_movers_tickers()
+    await _fetch_and_cache_movers()
     while True:
-        await asyncio.sleep(TOP_MOVERS_REFRESH_INTERVAL)
+        # Refrescar precios cada 3 minutos
+        for _ in range(int(TOP_MOVERS_REFRESH_INTERVAL / MOVERS_RESPONSE_CACHE_TTL)):
+            await asyncio.sleep(MOVERS_RESPONSE_CACHE_TTL)
+            await _fetch_and_cache_movers()
+        # Refrescar la lista de tickers cada 20 minutos
         await scrape_movers_tickers()
+        await _fetch_and_cache_movers()
+
 
 @app.get("/api/top-movers")
 async def get_top_movers():
+    global _movers_response_cache
+    # Responder desde caché si está fresco
+    if _movers_response_cache["data"] and time.time() - _movers_response_cache["ts"] < MOVERS_RESPONSE_CACHE_TTL:
+        return _movers_response_cache["data"]
+
+    # Caché vencido o vacío: fetchear ahora y guardar
     gainers_syms = _movers_tickers["gainers"]
     losers_syms = _movers_tickers["losers"]
-
-    # Si el caché todavía está vacío (race condition al arrancar), forzamos scrape
     if not gainers_syms and not losers_syms:
         await scrape_movers_tickers()
         gainers_syms = _movers_tickers["gainers"]
         losers_syms = _movers_tickers["losers"]
-
     if not gainers_syms and not losers_syms:
         return {"gainers": [], "losers": []}
 
-    # Traemos precios en vivo para los 10 tickers cacheados
-    all_syms = gainers_syms + losers_syms
-    tasks = [asyncio.to_thread(fetch_ticker_data, s) for s in all_syms]
-    all_results = await asyncio.gather(*tasks)
-
-    gainers_data = list(all_results[:len(gainers_syms)])
-    losers_data = list(all_results[len(gainers_syms):])
-
-    return {"gainers": gainers_data, "losers": losers_data}
+    await _fetch_and_cache_movers()
+    return _movers_response_cache["data"]
 
 
 async def scrape_econ_calendar():

@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useReducer } from 'react';
 import Chart from 'react-apexcharts';
 import { TrendingUp } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, useAnimation } from 'framer-motion';
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const WS_BASE = import.meta.env.VITE_WS_URL;
@@ -18,7 +18,7 @@ const PremiumNewsFeed = ({ news, activeIdx }) => {
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
-          <span className="text-[10px] uppercase tracking-[0.2em] font-medium text-white/40">Aggregating Intel...</span>
+          <span className="text-[10px] uppercase tracking-[0.2em] font-medium text-white/40">Recopilando datos...</span>
         </div>
       </div>
     );
@@ -64,7 +64,7 @@ const PremiumNewsFeed = ({ news, activeIdx }) => {
         >
           <div className="flex justify-between items-center mb-3">
             <span className={`text-[9px] font-bold tracking-[0.2em] uppercase px-2.5 py-1 rounded-sm border backdrop-blur-md ${style.badge} ${style.text}`}>
-              {activeNews.source || 'GLOBAL MARKETS'}
+              {activeNews.source || 'MERCADOS GLOBALES'}
             </span>
             <span className="text-[10px] font-medium text-white/40 tracking-wider pt-[1px]">
               {activeNews.time || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -91,104 +91,128 @@ const PremiumNewsFeed = ({ news, activeIdx }) => {
   );
 };
 
-// --- WIDGET 1: GRÁFICO DINÁMICO UADE (ULTRA-CLEAN WHITE) ---
-const FinancialChart = ({ ticker, onCycleComplete }) => {
-  const [series, setSeries] = useState([
-    { name: ticker, type: 'area', data: [] },
+// --- WIDGET 1: GRÁFICO DINÁMICO UADE — singleton compartido entre instancias clone/original ---
+const _chartState = {
+  series: [
+    { name: 'NVDA', type: 'area', data: [] },
     { name: 'SMA 20', type: 'line', data: [] },
     { name: 'SMA 50', type: 'line', data: [] },
-  ]);
-  const [scalesOpacity, setScalesOpacity] = useState(0);
-  const [lineClip, setLineClip] = useState(0);
-  const [priceInfo, setPriceInfo] = useState(null);
-  const [labelAnim, setLabelAnim] = useState('');
+  ],
+  scalesOpacity: 0,
+  lineClip: 0,
+  priceInfo: null,
+};
+const _chartSubs = new Set();
+const _chartUpdate = (patch) => { Object.assign(_chartState, patch); _chartSubs.forEach(fn => fn()); };
+let _chartMasterMounted = false;
+
+const FinancialChart = ({ ticker, onCycleComplete }) => {
+  const [, forceRender] = useReducer(n => n + 1, 0);
+  const isMaster = useRef(false);
+
+  // Suscribir esta instancia a los cambios del singleton
   useEffect(() => {
+    _chartSubs.add(forceRender);
+    if (!_chartMasterMounted) {
+      _chartMasterMounted = true;
+      isMaster.current = true;
+    }
+    return () => {
+      _chartSubs.delete(forceRender);
+      if (isMaster.current) { _chartMasterMounted = false; isMaster.current = false; }
+    };
+  }, []);
+
+  // Solo el master fetcha datos y corre la animación
+  useEffect(() => {
+    if (!isMaster.current) return;
+
     let cancelled = false;
     const controller = new AbortController();
 
     const runSequence = async () => {
-      // RESET: Todo limpio
-      setScalesOpacity(0);
-      setLineClip(0);
-      setLabelAnim('');
-      setPriceInfo(null);
+      _chartUpdate({
+        scalesOpacity: 0, lineClip: 0, priceInfo: null,
+        series: [
+          { name: ticker, type: 'area', data: [] },
+          { name: 'SMA 20', type: 'line', data: [] },
+          { name: 'SMA 50', type: 'line', data: [] },
+        ],
+      });
 
       try {
-        // Timeout de 12s para dar margen a la descarga de 5 días
         const fetchTimeout = setTimeout(() => controller.abort(), 12000);
         const res = await fetch(`${API_BASE}/api/chart/${ticker}`, { signal: controller.signal });
         clearTimeout(fetchTimeout);
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
         const data = await res.json();
-
         if (cancelled) return;
 
         if (data && data.length > 0) {
-          setSeries([
-            { name: ticker, type: 'area', data: data.map(d => [d.time, d.value]) },
-            { name: 'SMA 20', type: 'line', data: data.filter(d => d.sma20 != null).map(d => [d.time, d.sma20]) },
-            { name: 'SMA 50', type: 'line', data: data.filter(d => d.sma50 != null).map(d => [d.time, d.sma50]) },
-          ]);
-
-          // Calcular precio y variación
           const lastPrice = data[data.length - 1].value;
           const firstPrice = data[0].value;
           const pctChange = ((lastPrice - firstPrice) / firstPrice * 100);
           const lastSma20 = data.filter(d => d.sma20 != null).slice(-1)[0]?.sma20 || null;
           const lastSma50 = data.filter(d => d.sma50 != null).slice(-1)[0]?.sma50 || null;
-          if (!cancelled) setPriceInfo({ price: lastPrice, change: pctChange, sma20: lastSma20, sma50: lastSma50 });
 
-          // 1. ENTRADA: Fundido de escalas, luego barrido de línea
+          _chartUpdate({
+            series: [
+              { name: ticker, type: 'area', data: data.map(d => [d.time, d.value]) },
+              { name: 'SMA 20', type: 'line', data: data.filter(d => d.sma20 != null).map(d => [d.time, d.sma20]) },
+              { name: 'SMA 50', type: 'line', data: data.filter(d => d.sma50 != null).map(d => [d.time, d.sma50]) },
+            ],
+            priceInfo: { price: lastPrice, change: pctChange, sma20: lastSma20, sma50: lastSma50 },
+          });
+
           await new Promise(r => setTimeout(r, 500));
           if (cancelled) return;
-          setScalesOpacity(1);
+          _chartUpdate({ scalesOpacity: 1 });
 
           await new Promise(r => setTimeout(r, 600));
           if (cancelled) return;
-          setLineClip(100);
+          _chartUpdate({ lineClip: 100 });
 
-          // 2. Etiqueta aparece con barrido cuando la línea terminó
-          await new Promise(r => setTimeout(r, 1600));
-          if (cancelled) return;
-          setLabelAnim('enter');
-
-          // 3. PAUSA de visualización
-          await new Promise(r => setTimeout(r, 3500));
+          await new Promise(r => setTimeout(r, 1600 + 3500));
           if (cancelled) return;
 
-          // 4. SALIDA: barrido inverso de la etiqueta
-          setLabelAnim('exit');
-          await new Promise(r => setTimeout(r, 600));
-          if (cancelled) return;
+          _chartUpdate({ lineClip: 0 });
 
-          // 5. El barrido de la línea arranca
-          setLineClip(0);
-
-          // 6. FUNDIDO DE ESCALAS
           await new Promise(r => setTimeout(r, 800));
           if (cancelled) return;
-          setScalesOpacity(0);
+          _chartUpdate({ scalesOpacity: 0 });
 
-          // 7. ESPERA FINAL: Completar animaciones
           await new Promise(r => setTimeout(r, 500));
           if (cancelled) return;
+
           onCycleComplete();
         } else {
-          // Sin datos: avanzar al siguiente ticker
           await new Promise(r => setTimeout(r, 1000));
           if (!cancelled) onCycleComplete();
         }
       } catch (e) {
-        // Error o abort (timeout/unmount): avanzar al siguiente ticker
+        console.warn(`[W1] Error/Timeout fetching ${ticker}:`, e);
+        await new Promise(r => setTimeout(r, 2000));
         if (!cancelled) onCycleComplete();
       }
     };
 
+    const safetyTimeout = setTimeout(() => {
+      if (!cancelled) {
+        console.error(`[W1] Safety timeout triggered for ${ticker} - forcing cycle advance`);
+        onCycleComplete();
+      }
+    }, 15000);
+
     runSequence();
+
     return () => {
       cancelled = true;
       controller.abort();
+      clearTimeout(safetyTimeout);
     };
   }, [ticker]);
+
+  const { series, scalesOpacity, lineClip, priceInfo } = _chartState;
 
   // Bloomberg Terminal Style con SMAs + Volume
   const options = {
@@ -307,13 +331,13 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
 
         {/* DAY SESSION INFO BOX (LAST PRICE, VARIACIÓN, SMAs) */}
         <div className="absolute top-[8px] left-[8px] z-10 border border-[#888] rounded-sm bg-[#111111]/70 text-white text-[8px] p-1 w-36 font-bold shadow-md">
-          <div className="text-center mb-[2px] tracking-wide text-[#bbbbbb] pb-[2px] border-b border-[#333]">Day Session (<span className="text-white text-[10px]">{ticker}</span>)</div>
+          <div className="text-center mb-[2px] tracking-wide text-[#bbbbbb] pb-[2px] border-b border-[#333]">Sesión de Hoy (<span className="text-white text-[10px]">{ticker}</span>)</div>
           <div className="flex justify-between items-center pt-[2px]">
-            <span className="flex items-center gap-[3px]"><span className="w-1.5 h-1.5 bg-white inline-block"></span>Last Price</span>
+            <span className="flex items-center gap-[3px]"><span className="w-1.5 h-1.5 bg-white inline-block"></span>Últ. Precio</span>
             <span>{priceInfo ? priceInfo.price.toFixed(2) : '-'}</span>
           </div>
           <div className="flex justify-between items-center mt-[1px]">
-            <span className="flex items-center gap-[3px] text-[#999]"><span className="w-1.5 h-1.5 bg-[#999] inline-block"></span>Change %</span>
+            <span className="flex items-center gap-[3px] text-[#999]"><span className="w-1.5 h-1.5 bg-[#999] inline-block"></span>Variación %</span>
             <span className={priceInfo?.change >= 0 ? "text-emerald-400" : "text-[#ff0000]"}>
               {priceInfo ? `${priceInfo.change > 0 ? '+' : ''}${priceInfo.change.toFixed(2)}%` : '-'}
             </span>
@@ -460,7 +484,7 @@ const CompanyDataDisplay = ({ data, active }) => {
 
         <div className="z-10 flex flex-col items-center gap-3">
           <div className="text-white/60 text-[10px] uppercase tracking-[0.4em] font-bold animate-pulse">
-            Processing Information
+            Procesando Información
           </div>
           <motion.div
             className="h-[1px] bg-white/40 shadow-[0_0_8px_rgba(255,255,255,0.8)]"
@@ -503,32 +527,32 @@ const CompanyDataDisplay = ({ data, active }) => {
   const isPos = change_pct > 0;
 
   const kpis = [
-    { label: 'MKT CAP', value: fmtLarge(marketCap) },
+    { label: 'CAP. BURS.', value: fmtLarge(marketCap) },
     { label: 'P/E TTM', value: fmtNum(trailingPE) },
     { label: 'BETA', value: fmtNum(beta) },
-    { label: 'ENT. VAL', value: fmtLarge(enterpriseValue) },
-    { label: 'EPS TTM', value: fmtNum(trailingEps) },
-    { label: '52W CHG', value: fmtPct(weekChange52) },
-    { label: 'OPEN', value: fmtNum(open) },
-    { label: 'DAY HIGH', value: fmtNum(dayHigh) },
-    { label: 'DAY LOW', value: fmtNum(dayLow) },
-    { label: 'DIV YIELD', value: fmtPct(dividendYield) },
-    { label: 'VOLUME', value: fmtVol(volume) },
-    { label: 'AVG VOL', value: fmtVol(averageVolume) },
-    { label: 'FWD P/E', value: fmtNum(forwardPE) },
+    { label: 'VAL. EMP.', value: fmtLarge(enterpriseValue) },
+    { label: 'BPA TTM', value: fmtNum(trailingEps) },
+    { label: 'VAR 52S', value: fmtPct(weekChange52) },
+    { label: 'APERTURA', value: fmtNum(open) },
+    { label: 'MÁX. DÍA', value: fmtNum(dayHigh) },
+    { label: 'MÍN. DÍA', value: fmtNum(dayLow) },
+    { label: 'REND. DIV.', value: fmtPct(dividendYield) },
+    { label: 'VOLUMEN', value: fmtVol(volume) },
+    { label: 'VOL. PROM.', value: fmtVol(averageVolume) },
+    { label: 'P/E EST.', value: fmtNum(forwardPE) },
     { label: 'ROE', value: fmtPct(returnOnEquity) },
-    { label: 'NET MGN', value: fmtPct(profitMargins) },
-    { label: 'DEBT/EQ', value: fmtNum(debtToEquity) },
+    { label: 'MARGEN NETO', value: fmtPct(profitMargins) },
+    { label: 'DEUDA/CAP.', value: fmtNum(debtToEquity) },
     { label: 'EV/EBITDA', value: fmtNum(enterpriseToEbitda) },
-    { label: 'P/BOOK', value: fmtNum(priceToBook) },
+    { label: 'PRECIO/CONT.', value: fmtNum(priceToBook) },
   ]; // 18 items (6 filas x 3 columnas)
 
   const incomeRows = [
-    { label: 'TOTAL REVENUE', key: 'revenue' },
-    { label: 'GROSS PROFIT', key: 'grossProfit' },
-    { label: 'OPER. INCOME', key: 'operatingIncome' },
-    { label: 'PRE-TAX INC.', key: 'pretaxIncome' },
-    { label: 'NET INCOME', key: 'netIncome' },
+    { label: 'INGRESOS TOT.', key: 'revenue' },
+    { label: 'BENEF. BRUTO', key: 'grossProfit' },
+    { label: 'INGR. OPER.', key: 'operatingIncome' },
+    { label: 'ANTES IMPUEST.', key: 'pretaxIncome' },
+    { label: 'INGRESO NETO', key: 'netIncome' },
   ];
 
   return (
@@ -577,7 +601,7 @@ const CompanyDataDisplay = ({ data, active }) => {
       <div className={`flex-1 flex flex-col justify-center px-8 border-r border-[#222] relative overflow-hidden bg-[#111111] ${isPos ? 'shadow-[inset_0_0_80px_rgba(52,211,153,0.02)]' : 'shadow-[inset_0_0_80px_rgba(248,113,113,0.02)]'}`}>
         <div className={`absolute top-4 left-6 flex items-center gap-[6px] shrink-0 px-2.5 py-[4px] border rounded-[2px] glow-pulse ${isPos ? 'bg-emerald-400/10 border-emerald-400/30 shadow-[0_0_15px_rgba(52,211,153,0.15)]' : 'bg-red-400/10 border-red-400/30 shadow-[0_0_15px_rgba(248,113,113,0.15)]'}`}>
           <span className={`w-[6px] h-[6px] rounded-full animate-pulse ${isPos ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-red-400 shadow-[0_0_8px_#f87171]'}`} />
-          <span className={`text-[11px] font-bold uppercase tracking-[0.25em] ${isPos ? 'text-emerald-400' : 'text-red-400'}`}>Returning in 00:{timeLeft.toString().padStart(2, '0')}</span>
+          <span className={`text-[11px] font-bold uppercase tracking-[0.25em] ${isPos ? 'text-emerald-400' : 'text-red-400'}`}>Volviendo en 00:{timeLeft.toString().padStart(2, '0')}</span>
         </div>
 
         {scout_summary ? (
@@ -586,7 +610,7 @@ const CompanyDataDisplay = ({ data, active }) => {
           </div>
         ) : (
           <div className="mt-12 text-[14px] text-[#444] italic uppercase tracking-widest animate-pulse">
-            Analyzing market data...
+            Analizando datos de mercado...
           </div>
         )}
       </div>
@@ -597,7 +621,7 @@ const CompanyDataDisplay = ({ data, active }) => {
         style={{ width: '580px' }}
       >
         <div className="flex items-center text-[9px] uppercase tracking-widest mb-[6px] pb-[5px] border-b border-[#333]">
-          <div className="w-[120px] text-[#555] shrink-0">INCOME STMT</div>
+          <div className="w-[120px] text-[#555] shrink-0">ESTADO RESULT.</div>
           {income.map((q, i) => (
             <div key={i} className="flex-1 text-right text-[#777]">{q.period}</div>
           ))}
@@ -621,29 +645,43 @@ const CompanyDataDisplay = ({ data, active }) => {
   );
 };
 
+// Caché a nivel de módulo — persiste entre mount/unmount del componente
+const _scoutCache = {};
+
 // --- WIDGET 3 ALTERNATIVO: YAHOO SCOUT INTELLIGENCE (384px) ---
 const YahooScoutWidget = () => {
   const [localIdx, setLocalIdx] = useState(0);
-  const [data, setData] = useState(null);
+  const [data, setData] = useState(() => _scoutCache[TICKERS_ROTATION[0]] || null);
   const ticker = TICKERS_ROTATION[localIdx];
+  const localIdxRef = useRef(0);
 
   // Bucle independiente: Cambiar de acción cada 25 segundos
   useEffect(() => {
     const interval = setInterval(() => {
-      setLocalIdx(prev => (prev + 1) % TICKERS_ROTATION.length);
+      setLocalIdx(prev => {
+        const next = (prev + 1) % TICKERS_ROTATION.length;
+        localIdxRef.current = next;
+        return next;
+      });
     }, 25000);
     return () => clearInterval(interval);
   }, []);
 
-  // Fetch data cuando cambia el ticker local
+  // Fetch data cuando cambia el ticker local (usa caché de módulo si está disponible)
   useEffect(() => {
+    localIdxRef.current = localIdx;
+    if (_scoutCache[ticker]) {
+      setData(_scoutCache[ticker]);
+      return;
+    }
     let active = true;
+    setData(null);
     const fetchScout = async () => {
-      setData(null);
       try {
         const res = await fetch(`${API_BASE}/api/scout/${ticker}`);
         const result = await res.json();
         if (active && result && result.summary) {
+          _scoutCache[ticker] = result;
           setData(result);
         }
       } catch (e) {
@@ -662,7 +700,7 @@ const YahooScoutWidget = () => {
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
-          ANALYZING {ticker}...
+          ANALIZANDO {ticker}...
         </div>
       ) : (
         <>
@@ -671,7 +709,7 @@ const YahooScoutWidget = () => {
               {data.ticker}
             </span>
             <span className="text-[9px] text-emerald-400 uppercase tracking-widest bg-emerald-400/10 px-2 py-0.5 rounded border border-emerald-400/20 -translate-y-[2px]">
-              AI SUMMARY
+              RESUMEN IA
             </span>
           </div>
           <div className="flex-1 overflow-hidden mt-1 text-[15px] leading-[1.6] text-[#e0e0e0] font-sans pr-1 tracking-wide font-medium flex flex-col">
@@ -693,7 +731,15 @@ const TopMovers = () => {
       try {
         const res = await fetch(`${API_BASE}/api/top-movers`);
         const result = await res.json();
-        if (active) setData(result);
+        if (active && result) {
+          if (result.gainers) {
+            result.gainers.sort((a, b) => parseFloat(b.change) - parseFloat(a.change));
+          }
+          if (result.losers) {
+            result.losers.sort((a, b) => parseFloat(a.change) - parseFloat(b.change));
+          }
+          setData(result);
+        }
       } catch (e) {
         console.error("Top Movers fetch error", e);
       }
@@ -773,9 +819,9 @@ const TopMovers = () => {
         }
       `}</style>
       {/* Columna Izquierda: Gainers */}
-      <div className="flex-1 flex flex-col border-r border-[#1f2329]/50">
+      <div className="flex-1 flex flex-col border-r border-white/[0.05]">
         <div className="h-[24px] flex items-center px-2 border-b border-white/[0.05] bg-gradient-to-b from-white/[0.03] to-transparent">
-          <span className="text-[9px] tracking-[0.15em] font-bold uppercase opacity-75" style={{ color: '#34d399' }}>Top Gainers</span>
+          <span className="text-[9px] tracking-[0.15em] font-bold uppercase opacity-75" style={{ color: '#34d399' }}>Mayores Alzas</span>
         </div>
         <div className="flex-1 flex flex-col">
           {data.gainers.length > 0
@@ -784,7 +830,7 @@ const TopMovers = () => {
                 {renderBar(item, true, maxGain, i)}
               </div>
             ))
-            : <div className="flex-1 flex items-center justify-center text-[10px] text-zinc-600 uppercase tracking-widest animate-pulse">Scanning...</div>
+            : <div className="flex-1 flex items-center justify-center text-[10px] text-zinc-600 uppercase tracking-widest animate-pulse">Escaneando...</div>
           }
         </div>
       </div>
@@ -792,7 +838,7 @@ const TopMovers = () => {
       {/* Columna Derecha: Losers */}
       <div className="flex-1 flex flex-col">
         <div className="h-[24px] flex items-center px-2 border-b border-white/[0.05] bg-gradient-to-b from-white/[0.03] to-transparent">
-          <span className="text-[9px] tracking-[0.15em] font-bold uppercase opacity-75" style={{ color: '#f87171' }}>Top Losers</span>
+          <span className="text-[9px] tracking-[0.15em] font-bold uppercase opacity-75" style={{ color: '#f87171' }}>Mayores Bajas</span>
         </div>
         <div className="flex-1 flex flex-col">
           {data.losers.length > 0
@@ -801,13 +847,207 @@ const TopMovers = () => {
                 {renderBar(item, false, maxLoss, i)}
               </div>
             ))
-            : <div className="flex-1 flex items-center justify-center text-[10px] text-zinc-600 uppercase tracking-widest animate-pulse">Scanning...</div>
+            : <div className="flex-1 flex items-center justify-center text-[10px] text-zinc-600 uppercase tracking-widest animate-pulse">Escaneando...</div>
           }
         </div>
       </div>
     </div>
   );
 };
+
+// --- WIDGET 2 TICKERS: BUBBLE SWARM (shared physics singleton) ---
+const _bubbleGetWeightAndSize = (sym) => {
+  const base = { r: 28, mass: 1 };
+  if (sym.includes('GGAL') || sym.includes('YPFD')) return { r: 62, mass: 4 };
+  if (sym.includes('PAMP') || sym.includes('BMA') || sym.includes('BBAR')) return { r: 50, mass: 2.5 };
+  if (sym.includes('CEPU') || sym.includes('LOMA') || sym.includes('TECO2')) return { r: 38, mass: 1.5 };
+  if (sym.includes('BYMA')) return { r: 48, mass: 2 };
+  if (sym.includes('IRSA') || sym.includes('ALUA')) return { r: 34, mass: 1.2 };
+  return base;
+};
+const _bubbleInitialValues = {
+  "BMA - 48hs": 13300.00, "BYMA - 48hs": 301.25, "CEPU - 48hs": 301.25, "GGAL - 48hs": 6850.00,
+  "PAMP - 48hs": 4815.00, "YPFD - 48hs": 55950.00, "TECO2 - 48hs": 3285.00, "LOMA - 48hs": 3287.50,
+  "ALUA - 48hs": 1420.00, "BBAR - 48hs": 11500.00, "EDN - 48hs": 2200.00,
+  "IRSA - 48hs": 3800.00, "METR - 48hs": 1900.00,
+};
+// Singleton: nodos y refs de DOM compartidos entre todas las instancias del componente
+const _sharedNodes = { list: [] };
+const _sharedDomRefs = {}; // { [nodeId]: Set<HTMLElement> }
+let _physicsLoopId = null;
+
+const BubbleSwarm = ({ data, flashMap }) => {
+  const instanceRefs = useRef({}); // { [nodeId]: el } — solo para esta instancia
+  const [initialized, setInitialized] = useState(_sharedNodes.list.length > 0);
+
+  // 1. Inicializar nodos compartidos (solo la primera instancia que monte)
+  useEffect(() => {
+    if (_sharedNodes.list.length === 0) {
+      const width = 576, height = 192;
+      _sharedNodes.list = Object.keys(_bubbleInitialValues).map((sym) => {
+        const specs = _bubbleGetWeightAndSize(sym);
+        return {
+          id: sym, label: sym.split(' ')[0],
+          x: Math.random() * width, y: Math.random() * height,
+          vx: (Math.random() - 0.5) * 2, vy: (Math.random() - 0.5) * 2,
+          r: specs.r, mass: specs.mass,
+          val: _bubbleInitialValues[sym], change: 0, flash: 0,
+        };
+      });
+    }
+    setInitialized(true);
+
+    // Cleanup: dar de baja los DOM refs de esta instancia al desmontar
+    return () => {
+      Object.entries(instanceRefs.current).forEach(([id, el]) => {
+        _sharedDomRefs[id]?.delete(el);
+      });
+      instanceRefs.current = {};
+    };
+  }, []);
+
+  // 2. Actualizar datos (muta el singleton compartido)
+  useEffect(() => {
+    _sharedNodes.list.forEach(node => {
+      const currentVal = data[node.id];
+      if (currentVal) {
+        node.val = currentVal;
+        node.change = ((currentVal - _bubbleInitialValues[node.id]) / _bubbleInitialValues[node.id]) * 100;
+        if (flashMap[`rofex_${node.id}`]) node.flash = 1.0;
+      }
+    });
+  }, [data, flashMap]);
+
+  // 3. Loop de física — un único loop global, actualiza TODOS los DOM refs registrados
+  useEffect(() => {
+    if (!initialized) return;
+    if (_physicsLoopId !== null) return; // Ya está corriendo
+
+    const width = 576, height = 192;
+    let lastTime = performance.now();
+
+    const tick = (time) => {
+      const dt = Math.min((time - lastTime) / 16.666, 3);
+      lastTime = time;
+      const nodes = _sharedNodes.list;
+      const centerX = width / 2, centerY = height / 2;
+
+      nodes.forEach(node => {
+        node.vx *= Math.pow(0.92, dt);
+        node.vy *= Math.pow(0.92, dt);
+        node.vx += (centerX - node.x) * 0.0001 * dt;
+        const gravityTargetY = node.change > 0 ? 50 : (node.change < 0 ? height - 50 : centerY);
+        node.vy += (gravityTargetY - node.y) * 0.0004 * dt;
+        if (node.flash > 0) node.flash = Math.max(0, node.flash - 0.02 * dt);
+      });
+
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          const a = nodes[i], b = nodes[j];
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          const minDist = a.r + b.r + 3;
+          if (dist < minDist && dist > 0) {
+            const angle = Math.atan2(dy, dx);
+            const force = (minDist - dist) * 0.02 * dt;
+            const mRatioA = b.mass / (a.mass + b.mass);
+            const mRatioB = a.mass / (a.mass + b.mass);
+            const pushX = Math.cos(angle) * force, pushY = Math.sin(angle) * force;
+            a.vx -= pushX * mRatioA; a.vy -= pushY * mRatioA;
+            b.vx += pushX * mRatioB; b.vy += pushY * mRatioB;
+          }
+        }
+      }
+
+      nodes.forEach(node => {
+        if (node.x - node.r < 0) { node.x = node.r; node.vx *= -0.5; }
+        if (node.x + node.r > width) { node.x = width - node.r; node.vx *= -0.5; }
+        if (node.y - node.r < -10) { node.y = node.r - 10; node.vy *= -0.3; }
+        if (node.y + node.r > height + 10) { node.y = height + 10 - node.r; node.vy *= -0.3; }
+        node.x += node.vx * dt;
+        node.y += node.vy * dt;
+      });
+
+      // Actualizar TODAS las instancias DOM registradas para cada nodo
+      nodes.forEach(node => {
+        const els = _sharedDomRefs[node.id];
+        if (!els || els.size === 0) return;
+        const isPos = node.change >= 0;
+        const baseColor = isPos ? 'rgba(52,211,153,1)' : 'rgba(248,113,113,1)';
+        const glowColor = isPos
+          ? `rgba(52,211,153,${0.2 + node.flash * 0.6})`
+          : `rgba(248,113,113,${0.2 + node.flash * 0.6})`;
+        const transform = `translate3d(${node.x - node.r}px, ${node.y - node.r}px, 0) scale(${1 + node.flash * 0.1})`;
+        const shadow = `0 0 ${10 + node.flash * 20}px ${glowColor}, inset 0 0 10px ${glowColor}`;
+        els.forEach(el => {
+          if (!el) return;
+          el.style.transform = transform;
+          el.style.borderColor = baseColor;
+          el.style.boxShadow = shadow;
+          const span = el.querySelector('.bubble-pct');
+          if (span) {
+            span.style.color = baseColor;
+            span.textContent = `${isPos ? '+' : ''}${node.change.toFixed(1)}%`;
+          }
+        });
+      });
+
+      _physicsLoopId = requestAnimationFrame(tick);
+    };
+
+    _physicsLoopId = requestAnimationFrame(tick);
+    return () => {
+      if (_physicsLoopId !== null) { cancelAnimationFrame(_physicsLoopId); _physicsLoopId = null; }
+    };
+  }, [initialized]);
+
+  const setNodeRef = (id, el) => {
+    if (!_sharedDomRefs[id]) _sharedDomRefs[id] = new Set();
+    const prev = instanceRefs.current[id];
+    if (prev) _sharedDomRefs[id].delete(prev);
+    if (el) {
+      _sharedDomRefs[id].add(el);
+      instanceRefs.current[id] = el;
+    } else {
+      delete instanceRefs.current[id];
+    }
+  };
+
+  return (
+    <div className="w-full h-full relative overflow-hidden bg-[#111]">
+      <div className="absolute top-2 left-4 text-[9px] font-bold text-zinc-500 uppercase tracking-widest z-0 pointer-events-none">
+        Argentina
+      </div>
+      <div className="absolute inset-0 pointer-events-none z-0 flex flex-col justify-between">
+        <div className="h-1/3 bg-gradient-to-b from-[#34d399]/[0.02] to-transparent"></div>
+        <div className="h-1/3 bg-gradient-to-t from-[#f87171]/[0.02] to-transparent"></div>
+      </div>
+      {initialized && _sharedNodes.list.map(node => (
+        <div
+          key={node.id}
+          ref={el => setNodeRef(node.id, el)}
+          className="absolute top-0 left-0 rounded-full flex flex-col items-center justify-center will-change-transform"
+          style={{
+            width: node.r * 2, height: node.r * 2,
+            transform: `translate3d(${node.x - node.r}px, ${node.y - node.r}px, 0)`,
+            backgroundColor: '#161616',
+            border: '1.5px solid rgba(52,211,153,1)',
+            boxShadow: '0 0 10px rgba(52,211,153,0.2), inset 0 0 10px rgba(52,211,153,0.2)',
+            zIndex: 10,
+          }}
+        >
+          <span className="text-white font-bold leading-none" style={{ fontSize: `${node.r * 0.45}px` }}>
+            {node.label}
+          </span>
+          <span className="bubble-pct font-mono leading-none mt-[2px]" style={{ fontSize: `${node.r * 0.3}px`, color: 'rgba(52,211,153,1)' }}>
+            +0.0%
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 
 // --- WIDGET 4 ALTERNATIVO: MARKET HEATMAP (576px) ---
 const MarketHeatmap = () => {
@@ -917,17 +1157,17 @@ const MarketHeatmap = () => {
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-[#303030] gap-[1px] font-sans shadow-[inset_0_0_20px_rgba(0,0,0,1)]">
+    <div className="w-full h-full flex flex-col bg-[#111111] divide-y divide-[#303030] font-sans">
       {data.commodities.length === 0 && data.indices.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center text-[10px] text-zinc-600 uppercase tracking-widest animate-pulse h-full bg-[#151515]">Scanning global markets...</div>
+        <div className="flex-1 flex items-center justify-center text-[10px] text-zinc-600 uppercase tracking-widest animate-pulse h-full bg-[#161616]">Escaneando mercados globales...</div>
       ) : (
         <>
           {/* Fila 1: Commodities */}
-          <div className="flex-1 flex w-full gap-[1px]">
+          <div className="flex-1 flex w-full divide-x divide-[#303030]">
             {data.commodities.length > 0 ? data.commodities.map((item) => renderCell(item, 'comm')) : Array(5).fill(0).map((_, i) => renderCell(null, 'comm'))}
           </div>
           {/* Fila 2: Indices */}
-          <div className="flex-1 flex w-full gap-[1px]">
+          <div className="flex-1 flex w-full divide-x divide-[#303030]">
             {data.indices.length > 0 ? data.indices.map((item) => renderCell(item, 'idx')) : Array(5).fill(0).map((_, i) => renderCell(null, 'idx'))}
           </div>
         </>
@@ -942,6 +1182,10 @@ export default function App() {
   const [currentViewW2, setCurrentViewW2] = useState('TICKERS'); // 'TICKERS' | 'MOVERS' for W2
   const [currentViewW3, setCurrentViewW3] = useState('NEWS');    // 'NEWS' | 'SCOUT' for W3
 
+  const [isRotating, setIsRotating] = useState(false);
+  const containerRef = useRef(null);
+  const [isFadingBlack, setIsFadingBlack] = useState(false);
+
   const [prices, setPrices] = useState([]);
 
   const [rofexPrices, setRofexPrices] = useState({});
@@ -949,19 +1193,20 @@ export default function App() {
   const [flashMap, setFlashMap] = useState({});
   const prevPricesRef = useRef([]);
   const [idx, setIdx] = useState(0);
-  const [masterTime, setMasterTime] = useState(new Date());
-  const [maxDuration, setMaxDuration] = useState(0);
-  const [cycleKey, setCycleKey] = useState(0);
+  const [masterTime, setMasterTime] = useState(new Date()); // Keep just for specific needs, though removed from Clocks
+
+  // RESTORED VARIABLES:
   const socketRef = useRef(null);
   const [isAiActive, setIsAiActive] = useState(false);
   const [companyData, setCompanyData] = useState(null);
   const [newsIdx, setNewsIdx] = useState(0);
   const aiDismissTimer = useRef(null);
 
+  const isRotatingRef = useRef(isRotating);
+
   useEffect(() => {
-    const pulse = setInterval(() => setMasterTime(new Date()), 1000);
-    return () => clearInterval(pulse);
-  }, []);
+    isRotatingRef.current = isRotating;
+  }, [isRotating]);
 
   const newsRef = useRef(news);
 
@@ -969,7 +1214,21 @@ export default function App() {
     newsRef.current = news;
   }, [news]);
 
-  // Rotación de noticias robusta: el intervalo lee siempre la longitud actual de `news` a través del ref
+  // Pre-fetch de scout para todos los tickers al arrancar la app (antes de que SCOUT view sea visible)
+  useEffect(() => {
+    TICKERS_ROTATION.forEach((t, i) => {
+      setTimeout(async () => {
+        if (_scoutCache[t]) return;
+        try {
+          const res = await fetch(`${API_BASE}/api/scout/${t}`);
+          const result = await res.json();
+          if (result && result.summary) _scoutCache[t] = result;
+        } catch (e) { }
+      }, i * 4000); // stagger: 0s, 4s, 8s, 12s, 16s, 20s, 24s
+    });
+  }, []);
+
+  // Rotación de noticias: avanza cada 6s independientemente del estado de rotación del display
   useEffect(() => {
     const interval = setInterval(() => {
       setNewsIdx(prev => {
@@ -1062,36 +1321,77 @@ export default function App() {
     };
   }, []);
 
+  // --- LOGICA DE ROTACION AUTOMATICA (TICKER HORIZONTAL) PURE CSS ---
   useEffect(() => {
-    if (news.length > 0) {
-      const canvas = document.createElement("canvas");
-      const context = canvas.getContext("2d");
-      context.font = "14px 'JetBrains Mono'";
+    let active = true;
 
-      const times = news.slice(0, 5).map(n => {
-        const metrics = context.measureText(n.headline.toUpperCase());
-        const textWidth = metrics.width;
-        const containerWidth = 280; // ~75% de 384px
-        const dist = Math.max(0, textWidth - containerWidth);
+    const cycle = async () => {
+      while (active && isRotating) {
+        if (!active || !isRotating) break;
 
-        // (Distancia / Velocidad 18px/s) + 3s de pausa total (1.5s inicio + 1.5s fin)
-        return (dist / 18) + 3;
-      });
+        // Apply 45s CSS transition to the right (x: 2048px)
+        if (containerRef.current) {
+          containerRef.current.style.transition = 'transform 45s linear';
+          containerRef.current.style.transform = 'translate3d(2048px, 0, 0)';
+        }
 
-      const slowest = Math.max(...times);
-      // Seteamos la duración perfecta para que el más largo termine y todos peguen el salto
-      setMaxDuration(slowest > 0 ? slowest : 8);
+        // Wait for 45s for the CSS animation to complete
+        await new Promise(r => setTimeout(r, 45000));
+
+        if (!active || !isRotating) break;
+
+        // Swap the views exactly when the container is off-screen
+        setCurrentView(prev => prev === 'LOCAL' ? 'GLOBAL' : 'LOCAL');
+        setCurrentViewW2(prev => prev === 'TICKERS' ? 'MOVERS' : 'TICKERS');
+        setCurrentViewW3(prev => prev === 'NEWS' ? 'SCOUT' : 'NEWS');
+
+        // Snap back instantly to 0px (remove transition)
+        if (containerRef.current) {
+          containerRef.current.style.transition = 'none';
+          containerRef.current.style.transform = 'translate3d(0px, 0, 0)';
+          // Force reflow so the browser applies the jump instantly
+          void containerRef.current.offsetWidth;
+        }
+
+        // Small pause before spinning again
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    };
+
+    if (isRotating) {
+      cycle();
+    } else {
+      if (containerRef.current) {
+        containerRef.current.style.transition = 'none';
+        containerRef.current.style.transform = 'translate3d(0px, 0, 0)';
+      }
     }
-  }, [news]);
+
+    return () => {
+      active = false;
+    };
+  }, [isRotating]);
+
+  const handleToggleRotation = () => {
+    if (isRotating) {
+      // Detener rotacion
+      setIsFadingBlack(true);
+      setTimeout(() => {
+        setIsRotating(false);
+        setCurrentView('LOCAL');
+        setCurrentViewW2('TICKERS');
+        setCurrentViewW3('NEWS');
+        setIsFadingBlack(false);
+      }, 800); // Fades in black 800ms
+    } else {
+      // Iniciar rotacion
+      setIsRotating(true);
+    }
+  };
 
   // Reloj maestro: resetea TODAS las headlines juntas cada ciclo
   // +4s de pausa al final para que se queden quietas antes de reiniciar
-  const holdTime = 4;
-  useEffect(() => {
-    if (maxDuration <= 0) return;
-    const interval = setInterval(() => setCycleKey(k => k + 1), (maxDuration + holdTime) * 1000);
-    return () => clearInterval(interval);
-  }, [maxDuration]);
+  // (La lógica anterior fue removida para simplificar el renderizado)
 
   useEffect(() => {
     let socket;
@@ -1183,23 +1483,10 @@ export default function App() {
       "DLR/JUN26", "DLR/JUL26", "DLR/AGO26", "DLR/SEP26",
       "BMA - 48hs", "BYMA - 48hs", "CEPU - 48hs", "GGAL - 48hs",
       "PAMP - 48hs", "YPFD - 48hs", "TECO2 - 48hs", "LOMA - 48hs",
+      "ALUA - 48hs", "BBAR - 48hs", "EDN - 48hs", "IRSA - 48hs", "METR - 48hs",
       "PESOS - 1D", "PESOS - 3D", "PESOS - 7D", "PESOS - 30D",
       "DOLARES - 1D", "DOLARES - 3D", "DOLARES - 7D", "DOLARES - 30D"
     ];
-
-    // Valores iniciales "estáticos" en caso de que aún no existan
-    const initialValues = {
-      "DLR/FEB26": 1418.00, "DLR/MAR26": 1432.00, "DLR/ABR26": 1446.00, "DLR/MAY26": 1456.00,
-      "DLR/JUN26": 1464.00, "DLR/JUL26": 1473.00, "DLR/AGO26": 1482.00, "DLR/SEP26": 1491.00,
-      "BMA - 48hs": 13300.00, "BYMA - 48hs": 301.25, "CEPU - 48hs": 301.25, "GGAL - 48hs": 6850.00,
-      "PAMP - 48hs": 4815.00, "YPFD - 48hs": 55950.00, "TECO2 - 48hs": 3285.00, "LOMA - 48hs": 3287.50,
-      "PESOS - 1D": 30.25, "PESOS - 3D": 30.50, "PESOS - 7D": 31.80, "PESOS - 30D": 34.10,
-      "DOLARES - 1D": 2.15, "DOLARES - 3D": 2.30, "DOLARES - 7D": 2.45, "DOLARES - 30D": 3.10
-    };
-
-    // Rellenamos el estado con los valores estáticos si están vacíos
-    setRofexPrices(prev => ({ ...initialValues, ...prev }));
-
     const simulateTick = () => {
       // Elegir 1 a 3 símbolos al azar para actualizar
       const numToUpdate = Math.floor(Math.random() * 3) + 1;
@@ -1265,389 +1552,244 @@ export default function App() {
   const positiveCount = pricesArray.filter(p => p && p.change && parseFloat(p.change) > 0).length;
   const totalCount = pricesArray.length || 1;
   const ratio = positiveCount / totalCount;
-  const r = Math.round(248 + (74 - 248) * ratio);
-  const g = Math.round(113 + (222 - 113) * ratio);
-  const b = Math.round(113 + (128 - 113) * ratio);
-  const sentimentColor = `rgb(${r}, ${g}, ${b})`;
-  const neonGlow = `0 0 2px ${sentimentColor}, 0 0 8px ${sentimentColor}, 0 0 15px ${sentimentColor}`;
+
+  const renderDashboardContent = (keySuffix, { isAiActive, companyData, currentView, currentViewW2, currentViewW3, newsIdx } = {}) => (
+    <div key={keySuffix} className="w-[2048px] h-[192px] bg-[#111111] text-white flex overflow-hidden font-mono select-none relative shrink-0">
+
+
+
+      <AnimatePresence>
+        {isAiActive && <CompanyDataDisplay data={companyData} active={isAiActive} />}
+      </AnimatePresence>
+
+      {/* W1: CHART (512px) */}
+      <motion.div
+        animate={{ y: isAiActive ? -200 : 0 }}
+        transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
+        className="w-[512px] h-full border-r border-[#333] relative shrink-0 overflow-hidden bg-[#111111]"
+      >
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={typeof idx !== 'undefined' ? idx : 'chart'}
+            initial={{ opacity: 0, filter: 'blur(3px)' }}
+            animate={{ opacity: 1, filter: 'blur(0px)' }}
+            exit={{ opacity: 0, filter: 'blur(3px)' }}
+            transition={{ duration: 0.6, ease: "easeInOut" }}
+            className="absolute inset-0 w-full h-full"
+          >
+            <FinancialChart
+              ticker={typeof TICKERS_ROTATION !== 'undefined' ? TICKERS_ROTATION[idx] : 'SPY'}
+              onCycleComplete={() => setIdx(i => (i + 1) % TICKERS_ROTATION.length)}
+            />
+          </motion.div>
+        </AnimatePresence>
+      </motion.div>
+
+      {/* W2: MARKET WATCH (576px) */}
+      <motion.div
+        animate={{ y: isAiActive ? 200 : 0 }}
+        transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
+        className="w-[576px] h-full border-r border-white/5 shrink-0 bg-[#151515] flex flex-col shadow-[inset_0_0_40px_rgba(0,0,0,0.8)]">
+
+        <div className="relative w-full h-full">
+          <AnimatePresence mode="wait">
+            {currentViewW2 === 'TICKERS' ? (
+              <motion.div
+                key="market-watch"
+                initial={{ y: 50, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: -50, opacity: 0 }}
+                transition={{ duration: 0.5, ease: "easeInOut" }}
+                className="absolute inset-0 w-full h-full flex"
+              >
+                <BubbleSwarm data={rofexPrices} flashMap={flashMap} />
+              </motion.div>
+            ) : (
+              <motion.div
+                key="top-movers"
+                initial={{ y: 50, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: -50, opacity: 0 }}
+                transition={{ duration: 0.5, ease: "easeInOut" }}
+                className="absolute inset-0 w-full h-full"
+              >
+                <TopMovers />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </motion.div>
+
+      {/* W3: NEWS / ECO CALENDAR (384px) */}
+      <motion.div
+        animate={{ y: isAiActive ? -200 : 0 }}
+        transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
+        className="w-[384px] h-[192px] border-r border-white/5 shrink-0 bg-[#151515] font-sans overflow-hidden relative shadow-[inset_0_0_40px_rgba(0,0,0,0.8)]"
+      >
+        <AnimatePresence mode="wait">
+          {currentViewW3 === 'NEWS' ? (
+            <motion.div
+              key="news-view"
+              initial={{ y: 50, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: -50, opacity: 0 }}
+              transition={{ duration: 0.5, ease: "easeInOut" }}
+              className="absolute inset-0 flex flex-col"
+            >
+              {/* Header noticias */}
+              <div className="w-full px-5 py-2.5 border-b border-white/5 bg-gradient-to-b from-white/[0.04] to-transparent flex justify-between items-center z-10 backdrop-blur-md shrink-0">
+                <div className="flex items-center gap-2">
+                  <svg className="w-3.5 h-3.5 text-zinc-400 -translate-y-[0.5px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9.5a2.5 2.5 0 00-2.5-2.5H14" />
+                  </svg>
+                  <span className="text-white/80 text-[10px] font-semibold tracking-[0.2em]">ÚLTIMAS NOTICIAS</span>
+                </div>
+                <div className="flex items-center gap-1.5 px-3 py-1 rounded-sm bg-red-500/10 border border-red-500/20">
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse"></span>
+                  <span className="text-red-400 text-[8px] font-bold tracking-[0.15em] -translate-y-[1.5px]">EN VIVO</span>
+                </div>
+              </div>
+              {/* Contenido noticias */}
+              <div className="flex-1 overflow-hidden relative">
+                <PremiumNewsFeed news={news} activeIdx={newsIdx} />
+              </div>
+            </motion.div>
+          ) : (
+            <motion.div
+              key="scout-view"
+              initial={{ y: 50, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: -50, opacity: 0 }}
+              transition={{ duration: 0.5, ease: "easeInOut" }}
+              className="absolute inset-0 flex flex-col"
+            >
+              {/* El header fue removido para dar más espacio al texto */}
+              {/* Contenido scout */}
+              <div className="flex-1 overflow-hidden relative">
+                <YahooScoutWidget />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
+
+      {/* W4: WORLD CLOCKS / HEATMAP (576px) */}
+      <motion.div
+        animate={{ y: isAiActive ? 200 : 0 }}
+        transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
+        className="w-[576px] h-full flex items-center justify-center shrink-0 border-l border-r border-gray-900 relative overflow-hidden bg-[#111111]"
+      >
+        <AnimatePresence mode="wait">
+          {currentView === 'LOCAL' ? (
+            <motion.div
+              key="local-clocks"
+              initial={{ y: 50, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: -50, opacity: 0 }}
+              transition={{ duration: 0.5, ease: "easeInOut" }}
+              className="absolute inset-0 w-full h-full flex items-center justify-around px-3 bg-zinc-950/20"
+            >
+              {/* Mapa del mundo de fondo (SVG realista) */}
+              <div
+                className="absolute inset-0 pointer-events-none opacity-[0.12]"
+                style={{
+                  backgroundImage: 'url(/world_map.svg)',
+                  backgroundSize: '80% auto',
+                  backgroundPosition: 'center 20%',
+                  backgroundRepeat: 'no-repeat',
+                }}
+              />
+              <Clock city="BS AS" zone="America/Argentina/Buenos_Aires" />
+              <Clock city="NY" zone="America/New_York" />
+              <Clock city="LONDON" zone="Europe/London" />
+              <Clock city="TOKIO" zone="Asia/Tokyo" />
+              <Clock city="BEIJING" zone="Asia/Shanghai" />
+            </motion.div>
+          ) : (
+            <motion.div
+              key="global-heatmap"
+              initial={{ y: 50, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: -50, opacity: 0 }}
+              transition={{ duration: 0.5, ease: "easeInOut" }}
+              className="absolute inset-0 w-full h-full"
+            >
+              <MarketHeatmap />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
+    </div>
+  );
 
   return (
     <div className="flex flex-col bg-[#111111] overflow-hidden h-screen items-center">
-
-      <div className="w-[2048px] relative">
-        {/* INTERFAZ DE ANCHO FIJO: 2048px totales */}
-        <div className="w-full h-[192px] bg-[#111111] text-white flex overflow-hidden font-mono select-none relative shrink-0">
-
-
-
-          <AnimatePresence>
-            {isAiActive && <CompanyDataDisplay data={companyData} active={isAiActive} />}
-          </AnimatePresence>
-
-          {/* W1: CHART (512px) */}
-          <motion.div
-            animate={{ y: isAiActive ? -200 : 0 }}
-            transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
-            className="w-[512px] h-full border-r border-[#333] relative shrink-0 overflow-hidden bg-[#111111]"
+      {/* Contenedor relativo para alinear perfectamente los botones con el ancho del LED */}
+      <div className="relative w-[2048px] h-full">
+        <div className="w-[2048px] h-[192px] relative overflow-hidden">
+          <div
+            ref={containerRef}
+            className="absolute flex h-full transform-gpu"
+            style={{ left: '-2048px', width: '4096px', willChange: 'transform' }}
           >
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={typeof idx !== 'undefined' ? idx : 'chart'}
-                initial={{ opacity: 0, filter: 'blur(3px)' }}
-                animate={{ opacity: 1, filter: 'blur(0px)' }}
-                exit={{ opacity: 0, filter: 'blur(3px)' }}
-                transition={{ duration: 0.6, ease: "easeInOut" }}
-                className="absolute inset-0 w-full h-full"
-              >
-                <FinancialChart
-                  ticker={typeof TICKERS_ROTATION !== 'undefined' ? TICKERS_ROTATION[idx] : 'SPY'}
-                  onCycleComplete={() => setIdx(i => (i + 1) % TICKERS_ROTATION.length)}
-                />
-              </motion.div>
-            </AnimatePresence>
-          </motion.div>
+            {renderDashboardContent('clone', { isAiActive, companyData, currentView, currentViewW2, currentViewW3, newsIdx })}
+            {renderDashboardContent('original', { isAiActive, companyData, currentView, currentViewW2, currentViewW3, newsIdx })}
+          </div>
+        </div>
 
-          {/* W2: MARKET WATCH (576px) */}
-          <motion.div
-            animate={{ y: isAiActive ? 200 : 0 }}
-            transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
-            className="w-[576px] h-full border-r border-white/5 shrink-0 bg-[#151515] flex flex-col shadow-[inset_0_0_40px_rgba(0,0,0,0.8)]">
+        {/* FADE TO BLACK OVERLAY */}
+        <AnimatePresence>
+          {isFadingBlack && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.8 }}
+              className="fixed inset-0 bg-black z-50 pointer-events-none"
+            />
+          )}
+        </AnimatePresence>
 
-            <div className="relative w-full h-full">
-              <AnimatePresence mode="wait">
-                {currentViewW2 === 'TICKERS' ? (
-                  <motion.div
-                    key="market-watch"
-                    initial={{ y: 50, opacity: 0 }}
-                    animate={{ y: 0, opacity: 1 }}
-                    exit={{ y: -50, opacity: 0 }}
-                    transition={{ duration: 0.5, ease: "easeInOut" }}
-                    className="absolute inset-0 w-full h-full flex"
-                  >
-                    {(() => {
-                      // Helpers de formateo
-                      const fmtPrice = (val) => '$' + new Intl.NumberFormat('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 2 }).format(val);
-                      const fmtRate = (val) => new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val) + '%';
-
-                      // Obtenemos los valores de rofex o null
-                      const safeGet = (sym) => rofexPrices[sym] !== undefined ? rofexPrices[sym] : null;
-
-                      // Definimos las columnas
-                      const columns = [
-                        {
-                          title: "DÓLAR FUTURO",
-                          flex: "w-[33%]",
-                          priceMin: "min-w-[62px]",
-                          items: [
-                            { label: "DLR/FEB26", sym: "DLR/FEB26", val: safeGet("DLR/FEB26"), type: "price" },
-                            { label: "DLR/MAR26", sym: "DLR/MAR26", val: safeGet("DLR/MAR26"), type: "price" },
-                            { label: "DLR/ABR26", sym: "DLR/ABR26", val: safeGet("DLR/ABR26"), type: "price" },
-                            { label: "DLR/MAY26", sym: "DLR/MAY26", val: safeGet("DLR/MAY26"), type: "price" },
-                            { label: "DLR/JUN26", sym: "DLR/JUN26", val: safeGet("DLR/JUN26"), type: "price" },
-                            { label: "DLR/JUL26", sym: "DLR/JUL26", val: safeGet("DLR/JUL26"), type: "price" },
-                            { label: "DLR/AGO26", sym: "DLR/AGO26", val: safeGet("DLR/AGO26"), type: "price" },
-                            { label: "DLR/SEP26", sym: "DLR/SEP26", val: safeGet("DLR/SEP26"), type: "price" }
-                          ]
-                        },
-                        {
-                          title: "CAUCIONES (TNA)",
-                          flex: "w-[38%]",
-                          priceMin: "min-w-[50px]",
-                          items: [
-                            { label: "PESOS - 1D", sym: "PESOS - 1D", val: 30.25, type: "rate" },
-                            { label: "PESOS - 3D", sym: "PESOS - 3D", val: 30.50, type: "rate" },
-                            { label: "PESOS - 7D", sym: "PESOS - 7D", val: 31.80, type: "rate" },
-                            { label: "PESOS - 30D", sym: "PESOS - 30D", val: 34.10, type: "rate" },
-                            { label: "DOLARES - 1D", sym: "DOLARES - 1D", val: 2.15, type: "rate" },
-                            { label: "DOLARES - 3D", sym: "DOLARES - 3D", val: 2.30, type: "rate" },
-                            { label: "DOLARES - 7D", sym: "DOLARES - 7D", val: 2.45, type: "rate" },
-                            { label: "DOLARES - 30D", sym: "DOLARES - 30D", val: 3.10, type: "rate" }
-                          ]
-                        },
-                        {
-                          title: "ACCIONES (BYMA)",
-                          flex: "w-[29%]",
-                          priceMin: "min-w-[68px]",
-                          isLast: true,
-                          items: [
-                            { label: "BMA", sym: "BMA - 48hs", val: 13300.00, type: "price" },
-                            { label: "BYMA", sym: "BYMA - 48hs", val: 301.25, type: "price" },
-                            { label: "CEPU", sym: "CEPU - 48hs", val: 301.25, type: "price" },
-                            { label: "GGAL", sym: "GGAL - 48hs", val: 6850.00, type: "price" },
-                            { label: "PAMP", sym: "PAMP - 48hs", val: 4815.00, type: "price" },
-                            { label: "YPFD", sym: "YPFD - 48hs", val: 55950.00, type: "price" },
-                            { label: "TECO2", sym: "TECO2 - 48hs", val: 3285.00, type: "price" },
-                            { label: "LOMA", sym: "LOMA - 48hs", val: 3287.50, type: "price" }
-                          ]
-                        }
-                      ];
-
-                      const maxItems = 8;
-
-                      return (
-                        <div className="w-full h-full flex flex-col text-[12px] font-mono leading-none">
-
-                          {/* Títulos de columnas */}
-                          <div className="flex w-full border-b border-white/[0.05] shrink-0">
-                            {columns.map((col, cIdx) => (
-                              <div key={cIdx} className={`${col.flex} px-2 py-[3px] ${!col.isLast ? 'border-r border-white/[0.07]' : ''}`}>
-                                <span className="text-[8.5px] tracking-[0.12em] text-white/20 uppercase font-semibold font-sans">{col.title}</span>
-                              </div>
-                            ))}
-                          </div>
-
-                          {/* Filas de datos */}
-                          <div className="flex-1 flex flex-col min-h-0">
-                            {Array.from({ length: maxItems }).map((_, rIdx) => {
-                              const rowBgColor = rIdx % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent';
-
-                              return (
-                                <div key={rIdx} className="flex w-full flex-1 items-center" style={{ backgroundColor: rowBgColor }}>
-                                  {columns.map((col, cIdx) => {
-                                    const item = col.items[rIdx];
-                                    if (!item || !item.label) {
-                                      return <div key={cIdx} className={`${col.flex} flex px-2 h-full items-center shrink-0 ${!col.isLast ? 'border-r border-white/[0.07]' : ''}`}></div>;
-                                    }
-
-                                    const mockSymbolsArray = [
-                                      "DLR/FEB26", "DLR/MAR26", "DLR/ABR26", "DLR/MAY26",
-                                      "DLR/JUN26", "DLR/JUL26", "DLR/AGO26", "DLR/SEP26",
-                                      "BMA - 48hs", "BYMA - 48hs", "CEPU - 48hs", "GGAL - 48hs",
-                                      "PAMP - 48hs", "YPFD - 48hs", "TECO2 - 48hs", "LOMA - 48hs",
-                                      "PESOS - 1D", "PESOS - 3D", "PESOS - 7D", "PESOS - 30D",
-                                      "DOLARES - 1D", "DOLARES - 3D", "DOLARES - 7D", "DOLARES - 30D"
-                                    ];
-
-                                    const initialValuesMap = {
-                                      "DLR/FEB26": 1418.00, "DLR/MAR26": 1432.00, "DLR/ABR26": 1446.00, "DLR/MAY26": 1456.00,
-                                      "DLR/JUN26": 1464.00, "DLR/JUL26": 1473.00, "DLR/AGO26": 1482.00, "DLR/SEP26": 1491.00,
-                                      "BMA - 48hs": 13300.00, "BYMA - 48hs": 301.25, "CEPU - 48hs": 301.25, "GGAL - 48hs": 6850.00,
-                                      "PAMP - 48hs": 4815.00, "YPFD - 48hs": 55950.00, "TECO2 - 48hs": 3285.00, "LOMA - 48hs": 3287.50,
-                                      "PESOS - 1D": 30.25, "PESOS - 3D": 30.50, "PESOS - 7D": 31.80, "PESOS - 30D": 34.10,
-                                      "DOLARES - 1D": 2.15, "DOLARES - 3D": 2.30, "DOLARES - 7D": 2.45, "DOLARES - 30D": 3.10
-                                    };
-
-                                    const flashKey = `rofex_${item.sym}`;
-                                    const flash = flashMap[flashKey];
-                                    const symItem = mockSymbolsArray.includes(item.sym) ? item.sym : null;
-                                    const hasVal = item.val !== null || safeGet(symItem) !== null;
-                                    const currentVal = safeGet(item.sym) !== null ? safeGet(item.sym) : item.val;
-
-                                    // Definir un precio inicial "base" para calcular una variación realista
-                                    const initialVal = symItem ? initialValuesMap[symItem] : item.val;
-
-                                    let fakeVar = 0;
-                                    if (hasVal && currentVal && initialVal) {
-                                      fakeVar = ((currentVal - initialVal) / initialVal) * 100;
-                                    } else {
-                                      // Fallback estático viejo si por alguna razón falla el simulador
-                                      const hash = item.label.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-                                      fakeVar = ((hash % 800) / 100) - 4; // Entre -4.00% y +4.00%
-                                    }
-
-                                    const isPos = fakeVar >= 0;
-
-                                    return (
-                                      <div
-                                        key={cIdx}
-                                        className={`${col.flex} flex justify-between items-center h-full pl-2 ${!col.isLast ? 'border-r border-white/[0.07]' : ''} ${flash === 'up' ? 'flash-up' : flash === 'down' ? 'flash-down' : ''}`}
-                                      >
-                                        {/* Ticker label */}
-                                        <span className="text-zinc-500 truncate mr-1 min-w-[30px] transform-gpu antialiased tracking-wide">{item.label}</span>
-                                        <div className={`flex items-center h-full shrink-0 whitespace-nowrap transform-gpu antialiased ${cIdx > 0 ? 'pr-2' : 'pr-1'}`}>
-                                          {/* Precio */}
-                                          <div className={`relative h-full flex items-center ${col.priceMin} justify-end overflow-hidden ${hasVal ? "" : "text-white/20"} mr-1`} style={hasVal ? { color: '#c0c0c0' } : {}}>
-                                            <AnimatePresence mode="popLayout" initial={false}>
-                                              <motion.span
-                                                key={hasVal ? currentVal : 'empty'}
-                                                initial={{ y: flash === 'up' ? 10 : (flash === 'down' ? -10 : 0), opacity: flash ? 0 : 1, filter: flash ? 'blur(2px)' : 'blur(0px)' }}
-                                                animate={{ y: 0, opacity: 1, filter: 'blur(0px)' }}
-                                                exit={{ y: flash === 'up' ? -10 : (flash === 'down' ? 10 : 0), opacity: flash ? 0 : 1, filter: flash ? 'blur(2px)' : 'blur(0px)' }}
-                                                transition={{ duration: flash ? 0.25 : 0, ease: "easeOut" }}
-                                                className="absolute right-0 font-mono tracking-tight"
-                                              >
-                                                {hasVal
-                                                  ? (item.type === 'price' ? fmtPrice(currentVal) : fmtRate(currentVal))
-                                                  : '-.--'}
-                                              </motion.span>
-                                            </AnimatePresence>
-                                          </div>
-
-                                          {/* Badge variación */}
-                                          {hasVal ? (
-                                            <div className={`relative h-full w-[42px] flex items-center justify-end font-bold text-[11px] transform-gpu antialiased overflow-hidden ${isPos ? 'text-emerald-400' : 'text-red-400'}`}>
-                                              <AnimatePresence mode="popLayout" initial={false}>
-                                                <motion.div
-                                                  key={fakeVar}
-                                                  initial={{ y: flash === 'up' ? 8 : (flash === 'down' ? -8 : 0), opacity: flash ? 0 : 1, filter: flash ? 'blur(2px)' : 'blur(0px)' }}
-                                                  animate={{ y: 0, opacity: 1, filter: 'blur(0px)' }}
-                                                  exit={{ y: flash === 'up' ? -8 : (flash === 'down' ? 8 : 0), opacity: flash ? 0 : 1, filter: flash ? 'blur(2px)' : 'blur(0px)' }}
-                                                  transition={{ duration: flash ? 0.25 : 0, ease: "easeOut" }}
-                                                  className="absolute right-0"
-                                                >
-                                                  {isPos ? '+' : ''}{fakeVar.toFixed(2)}%
-                                                </motion.div>
-                                              </AnimatePresence>
-                                            </div>
-                                          ) : (
-                                            <div className="h-full w-[45px]"></div>
-                                          )}
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </motion.div>
-                ) : (
-                  <motion.div
-                    key="top-movers"
-                    initial={{ y: 50, opacity: 0 }}
-                    animate={{ y: 0, opacity: 1 }}
-                    exit={{ y: -50, opacity: 0 }}
-                    transition={{ duration: 0.5, ease: "easeInOut" }}
-                    className="absolute inset-0 w-full h-full"
-                  >
-                    <TopMovers />
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          </motion.div>
-
-          {/* W3: NEWS / ECO CALENDAR (384px) */}
-          <motion.div
-            animate={{ y: isAiActive ? -200 : 0 }}
-            transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
-            className="w-[384px] h-[192px] border-r border-white/5 shrink-0 bg-[#151515] font-sans overflow-hidden relative shadow-[inset_0_0_40px_rgba(0,0,0,0.8)]"
+        {/* ROTATION CONTROL BUTTON (Below W1) */}
+        <div className="absolute top-[216px] left-[256px] -translate-x-1/2 flex items-center justify-center">
+          <button
+            onClick={handleToggleRotation}
+            className={`px-5 py-2 text-[11px] font-bold tracking-widest uppercase rounded-sm transition-all duration-300 shadow-lg ${isRotating ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20 border border-red-500/30' : 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/30'}`}
           >
-            <AnimatePresence mode="wait">
-              {currentViewW3 === 'NEWS' ? (
-                <motion.div
-                  key="news-view"
-                  initial={{ y: 50, opacity: 0 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  exit={{ y: -50, opacity: 0 }}
-                  transition={{ duration: 0.5, ease: "easeInOut" }}
-                  className="absolute inset-0 flex flex-col"
-                >
-                  {/* Header noticias */}
-                  <div className="w-full px-5 py-2.5 border-b border-white/5 bg-gradient-to-b from-white/[0.04] to-transparent flex justify-between items-center z-10 backdrop-blur-md shrink-0">
-                    <div className="flex items-center gap-2">
-                      <svg className="w-3.5 h-3.5 text-zinc-400 -translate-y-[0.5px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9.5a2.5 2.5 0 00-2.5-2.5H14" />
-                      </svg>
-                      <span className="text-white/80 text-[10px] font-semibold tracking-[0.2em]">LATEST HEADLINES</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 px-3 py-1 rounded-sm bg-red-500/10 border border-red-500/20">
-                      <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse"></span>
-                      <span className="text-red-400 text-[8px] font-bold tracking-[0.15em] -translate-y-[1.5px]">LIVE</span>
-                    </div>
-                  </div>
-                  {/* Contenido noticias */}
-                  <div className="flex-1 overflow-hidden relative">
-                    <PremiumNewsFeed news={news} activeIdx={newsIdx} />
-                  </div>
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="scout-view"
-                  initial={{ y: 50, opacity: 0 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  exit={{ y: -50, opacity: 0 }}
-                  transition={{ duration: 0.5, ease: "easeInOut" }}
-                  className="absolute inset-0 flex flex-col"
-                >
-                  {/* El header fue removido para dar más espacio al texto */}
-                  {/* Contenido scout */}
-                  <div className="flex-1 overflow-hidden relative">
-                    <YahooScoutWidget />
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </motion.div>
-
-          {/* W4: WORLD CLOCKS / HEATMAP (576px) */}
-          <motion.div
-            animate={{ y: isAiActive ? 200 : 0 }}
-            transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
-            className="w-[576px] h-full flex items-center justify-center shrink-0 border-l border-r border-gray-900 relative overflow-hidden bg-[#111111]"
-          >
-            <AnimatePresence mode="wait">
-              {currentView === 'LOCAL' ? (
-                <motion.div
-                  key="local-clocks"
-                  initial={{ y: 50, opacity: 0 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  exit={{ y: -50, opacity: 0 }}
-                  transition={{ duration: 0.5, ease: "easeInOut" }}
-                  className="absolute inset-0 w-full h-full flex items-center justify-around px-3 bg-zinc-950/20"
-                >
-                  {/* Mapa del mundo de fondo (SVG realista) */}
-                  <div
-                    className="absolute inset-0 pointer-events-none opacity-[0.12]"
-                    style={{
-                      backgroundImage: 'url(/world_map.svg)',
-                      backgroundSize: '80% auto',
-                      backgroundPosition: 'center 20%',
-                      backgroundRepeat: 'no-repeat',
-                    }}
-                  />
-                  <Clock city="BS AS" zone="America/Argentina/Buenos_Aires" time={masterTime} />
-                  <Clock city="NY" zone="America/New_York" time={masterTime} />
-                  <Clock city="LONDON" zone="Europe/London" time={masterTime} />
-                  <Clock city="TOKIO" zone="Asia/Tokyo" time={masterTime} />
-                  <Clock city="BEIJING" zone="Asia/Shanghai" time={masterTime} />
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="global-heatmap"
-                  initial={{ y: 50, opacity: 0 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  exit={{ y: -50, opacity: 0 }}
-                  transition={{ duration: 0.5, ease: "easeInOut" }}
-                  className="absolute inset-0 w-full h-full"
-                >
-                  <MarketHeatmap />
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </motion.div>
-
-        </div >
+            {isRotating ? 'DETENER ROTACIÓN' : 'INICIAR ROTACIÓN'}
+          </button>
+        </div>
 
         {/* VIEW SWITCHER TABS (Bottom Bar, attached to W2) */}
-        <div className="absolute top-[216px] left-[800px] -translate-x-1/2 flex items-center gap-3">
+        <div className={`absolute top-[216px] left-[800px] -translate-x-1/2 flex items-center gap-3 transition-opacity duration-500 ${isRotating ? 'opacity-30 pointer-events-none' : 'opacity-100'}`}>
           <button
             onClick={() => setCurrentViewW2('TICKERS')}
+            disabled={isRotating}
             className={`px-4 py-1.5 text-[11px] font-bold tracking-widest uppercase rounded-sm transition-all duration-300 ${currentViewW2 === 'TICKERS' ? 'bg-zinc-800 text-white' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}`}
           >
-            Market Watch
+            Monitor Mercado
           </button>
           <button
             onClick={() => setCurrentViewW2('MOVERS')}
+            disabled={isRotating}
             className={`px-4 py-1.5 text-[11px] font-bold tracking-widest uppercase rounded-sm transition-all duration-300 ${currentViewW2 === 'MOVERS' ? 'bg-zinc-800 text-white' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}`}
           >
-            Top Movers
+            Mejores Mov.
           </button>
         </div>
 
         {/* VIEW SWITCHER TABS (Bottom Bar, attached to W3) */}
-        <div className="absolute top-[216px] left-[1280px] -translate-x-1/2 flex items-center gap-3">
+        <div className={`absolute top-[216px] left-[1280px] -translate-x-1/2 flex items-center gap-3 transition-opacity duration-500 ${isRotating ? 'opacity-30 pointer-events-none' : 'opacity-100'}`}>
           <button
             onClick={() => setCurrentViewW3('NEWS')}
+            disabled={isRotating}
             className={`px-4 py-1.5 text-[11px] font-bold tracking-widest uppercase rounded-sm transition-all duration-300 ${currentViewW3 === 'NEWS' ? 'bg-zinc-800 text-white' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}`}
           >
-            Headlines
+            Titulares
           </button>
           <button
             onClick={() => setCurrentViewW3('SCOUT')}
+            disabled={isRotating}
             className={`px-4 py-1.5 text-[11px] font-bold tracking-widest uppercase rounded-sm transition-all duration-300 ${currentViewW3 === 'SCOUT' ? 'bg-zinc-800 text-white' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}`}
           >
             Yahoo Scout
@@ -1655,23 +1797,23 @@ export default function App() {
         </div>
 
         {/* VIEW SWITCHER TABS (Bottom Bar, attached to W4) */}
-        <div className="absolute top-[216px] right-[288px] translate-x-1/2 flex items-center gap-3">
+        <div className={`absolute top-[216px] right-[288px] translate-x-1/2 flex items-center gap-3 transition-opacity duration-500 ${isRotating ? 'opacity-30 pointer-events-none' : 'opacity-100'}`}>
           <button
             onClick={() => setCurrentView('LOCAL')}
+            disabled={isRotating}
             className={`px-4 py-1.5 text-[11px] font-bold tracking-widest uppercase rounded-sm transition-all duration-300 ${currentView === 'LOCAL' ? 'bg-zinc-800 text-white' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}`}
           >
-            World Clocks
+            Reloj Mundial
           </button>
           <button
             onClick={() => setCurrentView('GLOBAL')}
             className={`px-4 py-1.5 text-[11px] font-bold tracking-widest uppercase rounded-sm transition-all duration-300 ${currentView === 'GLOBAL' ? 'bg-zinc-800 text-white' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}`}
           >
-            Global Markets
+            Mercados Globales
           </button>
         </div>
-
-      </div >
-    </div >
+      </div>
+    </div>
   );
 }
 
@@ -1688,7 +1830,14 @@ const CLOCK_MARKET_HOURS = {
   'BEIJING': { sessions: [[9 * 60 + 30, 11 * 60 + 30], [13 * 60, 15 * 60]] },
 };
 
-const Clock = ({ city, zone, time }) => {
+const Clock = ({ city, zone }) => {
+  const [time, setTime] = useState(new Date());
+
+  useEffect(() => {
+    const pulse = setInterval(() => setTime(new Date()), 1000);
+    return () => clearInterval(pulse);
+  }, []);
+
   const timeInZone = new Date(time.toLocaleString('en-US', { timeZone: zone }));
   const hrs = timeInZone.getHours();
   const mins = timeInZone.getMinutes();
@@ -1700,12 +1849,16 @@ const Clock = ({ city, zone, time }) => {
   // Accumulated rotation — always increases so CSS transition never animates backwards
   const prevSecsRef = useRef(secs);
   const accSecRef = useRef(secs * 6);
-  if (secs !== prevSecsRef.current) {
-    const delta = secs - prevSecsRef.current;
-    accSecRef.current += (delta > 0 ? delta : 60 + delta) * 6;
-    prevSecsRef.current = secs;
-  }
-  const secDeg = accSecRef.current;
+  const [secDeg, setSecDeg] = useState(secs * 6);
+
+  useEffect(() => {
+    if (secs !== prevSecsRef.current) {
+      const delta = secs - prevSecsRef.current;
+      accSecRef.current += (delta > 0 ? delta : 60 + delta) * 6;
+      prevSecsRef.current = secs;
+      setSecDeg(accSecRef.current);
+    }
+  }, [secs]);
 
   const dayOfWeek = timeInZone.getDay();
   const minuteOfDay = hrs * 60 + mins;
@@ -1948,7 +2101,7 @@ const Clock = ({ city, zone, time }) => {
           fontSize: '8px', fontWeight: 700, letterSpacing: '0.18em',
           color: accent, textTransform: 'uppercase', fontFamily: 'sans-serif',
         }}>
-          {isActive ? 'OPEN' : 'CLOSED'}
+          {isActive ? 'ABIERTO' : 'CERRADO'}
         </span>
         <span style={{ fontSize: '7px', color: '#ffffff', fontFamily: 'monospace', letterSpacing: '0.04em' }}>
           {utcOffset}
