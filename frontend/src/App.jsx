@@ -647,19 +647,21 @@ const CompanyDataDisplay = ({ data, active }) => {
 
 // Caché a nivel de módulo — persiste entre mount/unmount del componente
 const _scoutCache = {};
+let _scoutGlobalIdx = 0;
 
 // --- WIDGET 3 ALTERNATIVO: YAHOO SCOUT INTELLIGENCE (384px) ---
 const YahooScoutWidget = () => {
-  const [localIdx, setLocalIdx] = useState(0);
-  const [data, setData] = useState(() => _scoutCache[TICKERS_ROTATION[0]] || null);
+  const [localIdx, setLocalIdx] = useState(_scoutGlobalIdx);
+  const [data, setData] = useState(() => _scoutCache[TICKERS_ROTATION[_scoutGlobalIdx]] || null);
   const ticker = TICKERS_ROTATION[localIdx];
-  const localIdxRef = useRef(0);
+  const localIdxRef = useRef(localIdx);
 
   // Bucle independiente: Cambiar de acción cada 25 segundos
   useEffect(() => {
     const interval = setInterval(() => {
       setLocalIdx(prev => {
         const next = (prev + 1) % TICKERS_ROTATION.length;
+        _scoutGlobalIdx = next; // Persistir globalmente
         localIdxRef.current = next;
         return next;
       });
@@ -866,10 +868,10 @@ const _bubbleGetWeightAndSize = (sym) => {
   return base;
 };
 const _bubbleInitialValues = {
-  "BMA - 48hs": 13300.00, "BYMA - 48hs": 301.25, "CEPU - 48hs": 301.25, "GGAL - 48hs": 6850.00,
-  "PAMP - 48hs": 4815.00, "YPFD - 48hs": 55950.00, "TECO2 - 48hs": 3285.00, "LOMA - 48hs": 3287.50,
-  "ALUA - 48hs": 1420.00, "BBAR - 48hs": 11500.00, "EDN - 48hs": 2200.00,
-  "IRSA - 48hs": 3800.00, "METR - 48hs": 1900.00,
+  "BMA - 48hs": 10380.00, "BYMA - 48hs": 306.25, "CEPU - 48hs": 2157.00, "GGAL - 48hs": 6170.00,
+  "PAMP - 48hs": 4695.00, "YPFD - 48hs": 55100.00, "TECO2 - 48hs": 3245.00, "LOMA - 48hs": 2915.00,
+  "ALUA - 48hs": 850.00, "BBAR - 48hs": 6885.00, "EDN - 48hs": 1876.00,
+  "IRSA - 48hs": 2140.00, "METR - 48hs": 1820.00,
 };
 // Singleton: nodos y refs de DOM compartidos entre todas las instancias del componente
 const _sharedNodes = { list: [] };
@@ -910,11 +912,12 @@ const BubbleSwarm = ({ data, flashMap }) => {
   useEffect(() => {
     _sharedNodes.list.forEach(node => {
       const currentVal = data[node.id];
-      if (currentVal) {
-        node.val = currentVal;
-        node.change = ((currentVal - _bubbleInitialValues[node.id]) / _bubbleInitialValues[node.id]) * 100;
+      if (currentVal && typeof currentVal === 'object' && currentVal.c !== undefined && currentVal.pc !== undefined) {
+        node.val = currentVal.c;
+        node.change = currentVal.pc; // pct_change real de data912
         if (flashMap[`rofex_${node.id}`]) node.flash = 1.0;
       }
+      // No fallback: si no llegó el websocket aún, mantenemos change en 0
     });
   }, [data, flashMap]);
 
@@ -1433,9 +1436,11 @@ export default function App() {
 
         // Manejador del WebSocket de Cotizaciones ROFEX (Mercado Local)
         if (data.command === "ROFEX_UPDATE") {
-          const { symbol, price } = data.payload;
+          const { symbol, price, pct_change } = data.payload;
           setRofexPrices(prev => {
-            const oldPrice = prev[symbol];
+            // Guardamos el objeto entero para que el scatter plot pueda usar pct_change diréctamente
+            const oldPriceObj = prev[symbol];
+            const oldPrice = oldPriceObj ? (typeof oldPriceObj === 'object' ? oldPriceObj.c : oldPriceObj) : null;
 
             // Si el precio cambió, aplicamos efecto de flash verde/rojo
             if (oldPrice && price !== oldPrice) {
@@ -1449,7 +1454,7 @@ export default function App() {
               }), 800);
             }
 
-            return { ...prev, [symbol]: price };
+            return { ...prev, [symbol]: { c: price, pc: pct_change } };
           });
         }
       };
@@ -1475,77 +1480,7 @@ export default function App() {
     };
   }, []);
 
-  // --- EFECTO DE COTIZACIONES FALSAS PARA WIDGET 2 ---
-  useEffect(() => {
-    // Array de los símbolos a simular (mezcla de Rofex y Acciones locales)
-    const mockSymbols = [
-      "DLR/FEB26", "DLR/MAR26", "DLR/ABR26", "DLR/MAY26",
-      "DLR/JUN26", "DLR/JUL26", "DLR/AGO26", "DLR/SEP26",
-      "BMA - 48hs", "BYMA - 48hs", "CEPU - 48hs", "GGAL - 48hs",
-      "PAMP - 48hs", "YPFD - 48hs", "TECO2 - 48hs", "LOMA - 48hs",
-      "ALUA - 48hs", "BBAR - 48hs", "EDN - 48hs", "IRSA - 48hs", "METR - 48hs",
-      "PESOS - 1D", "PESOS - 3D", "PESOS - 7D", "PESOS - 30D",
-      "DOLARES - 1D", "DOLARES - 3D", "DOLARES - 7D", "DOLARES - 30D"
-    ];
-    const simulateTick = () => {
-      // Elegir 1 a 3 símbolos al azar para actualizar
-      const numToUpdate = Math.floor(Math.random() * 3) + 1;
-
-      setRofexPrices(prev => {
-        const nextState = { ...prev };
-        const keysToUpdate = [];
-
-        for (let i = 0; i < numToUpdate; i++) {
-          const sym = mockSymbols[Math.floor(Math.random() * mockSymbols.length)];
-          keysToUpdate.push(sym);
-
-          let currentVal = nextState[sym] || 1000;
-
-          // Lógica de fluctuación: las tasas fluctúan menos que los precios
-          const isRate = sym.includes("PESOS") || sym.includes("DOLARES");
-          const isUsdRate = sym.includes("DOLARES");
-
-          let change;
-          if (isRate) {
-            change = (Math.random() - 0.5) * (isUsdRate ? 0.05 : 0.5); // Tasas fluctúan poquito
-          } else {
-            // Precios fluctúan entre -0.5% y +0.5%
-            change = currentVal * ((Math.random() - 0.5) * 0.01);
-          }
-
-          const newVal = currentVal + change;
-
-          // Solo actualizamos si el cambio es significativo (para evitar triggers en falso)
-          if (Math.abs(newVal - currentVal) > 0.001) {
-            nextState[sym] = newVal;
-
-            // Disparar flash
-            const direction = newVal > currentVal ? 'up' : 'down';
-            const flashKey = `rofex_${sym}`;
-
-            setFlashMap(fm => ({ ...fm, [flashKey]: direction }));
-            setTimeout(() => setFlashMap(fm => {
-              const copy = { ...fm };
-              delete copy[flashKey];
-              return copy;
-            }), 800);
-          }
-        }
-        return nextState;
-      });
-    };
-
-    // Actualiza precios cada 800ms a 2000ms al azar
-    const runSimulation = () => {
-      simulateTick();
-      const nextTimeout = 800 + Math.random() * 1200;
-      simTimer = setTimeout(runSimulation, nextTimeout);
-    };
-
-    let simTimer = setTimeout(runSimulation, 2000);
-
-    return () => clearTimeout(simTimer);
-  }, []);
+  // Eliminar simulación de tick falso de fin de semana
 
   // --- LÓGICA DE SENTIMIENTO (Se mantiene igual) ---
   const pricesArray = Array.isArray(prices) ? prices : [];
@@ -1556,10 +1491,9 @@ export default function App() {
   const renderDashboardContent = (keySuffix, { isAiActive, companyData, currentView, currentViewW2, currentViewW3, newsIdx } = {}) => (
     <div key={keySuffix} className="w-[2048px] h-[192px] bg-[#111111] text-white flex overflow-hidden font-mono select-none relative shrink-0">
 
-
-
+      {/* AI DATA OVERLAY (Mounted inside the rotating wrapper when data is ready) */}
       <AnimatePresence>
-        {isAiActive && <CompanyDataDisplay data={companyData} active={isAiActive} />}
+        {isAiActive && companyData && <CompanyDataDisplay data={companyData} active={isAiActive} />}
       </AnimatePresence>
 
       {/* W1: CHART (512px) */}
@@ -1737,6 +1671,11 @@ export default function App() {
           </div>
         </div>
 
+        {/* AI LOADING OVERLAY (Mounted outside the rotating wrapper to stay fixed while loading) */}
+        <AnimatePresence>
+          {isAiActive && !companyData && <CompanyDataDisplay data={companyData} active={isAiActive} />}
+        </AnimatePresence>
+
         {/* FADE TO BLACK OVERLAY */}
         <AnimatePresence>
           {isFadingBlack && (
@@ -1774,7 +1713,7 @@ export default function App() {
             disabled={isRotating}
             className={`px-4 py-1.5 text-[11px] font-bold tracking-widest uppercase rounded-sm transition-all duration-300 ${currentViewW2 === 'MOVERS' ? 'bg-zinc-800 text-white' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}`}
           >
-            Mejores Mov.
+            Movimientos
           </button>
         </div>
 
@@ -1792,7 +1731,7 @@ export default function App() {
             disabled={isRotating}
             className={`px-4 py-1.5 text-[11px] font-bold tracking-widest uppercase rounded-sm transition-all duration-300 ${currentViewW3 === 'SCOUT' ? 'bg-zinc-800 text-white' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'}`}
           >
-            Yahoo Scout
+            RESUMEN IA
           </button>
         </div>
 

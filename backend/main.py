@@ -19,100 +19,37 @@ import time
 import re
 from dotenv import load_dotenv
 load_dotenv()
-import pyRofex
-import ssl
+import random
+from yfinance import base
 
-# Bypass para el error de certificados SSL en entornos locales de Windows
-ssl._create_default_https_context = ssl._create_unverified_context
-
-# --- INICIALIZACIÓN DE ROFEX ---
-try:
-    env_str = os.environ.get("PYROFEX_ENVIRONMENT", "REMARKET")
-    rofex_env = pyRofex.Environment.LIVE if env_str.upper() == "LIVE" else pyRofex.Environment.REMARKET
-
-    pyRofex.initialize(
-        user=os.environ.get("PYROFEX_USER"),
-        password=os.environ.get("PYROFEX_PASSWORD"),
-        account=os.environ.get("PYROFEX_ACCOUNT"),
-        environment=rofex_env
-    )
-    print(f"✅ PyRofex Inicializado correctamente en {env_str}")
-except Exception as e:
-    print(f"❌ Error al inicializar PyRofex: {e}")
+# --- YAHOO FINANCE CRUMB BYPASS ---
+# yfinance está siendo bloqueado con 401 Invalid Crumb frecuently
+# Usamos curl_cffi para imitar a un navegador real (Chrome)
+class CffiSession(cffi_requests.Session):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.impersonate = "chrome120"
+yf_session = CffiSession()
 
 # Estado global para guardar el último precio de ROFEX
-# Se inicializa de forma dinámica al pedir precios
 ROFEX_STATE = {}
 
-def get_rofex_initial_price(symbol: str):
-    """Obtiene el último precio operado o de ajuste (cierre) desde la API REST de Rofex"""
-    # Excluímos cauciones que no estén en formato de ticker válido
-    if "PESOS" in symbol or "DOLARES" in symbol:
-        return 0.0
-        
-    try:
-        entries = [
-            pyRofex.MarketDataEntry.LAST, 
-            pyRofex.MarketDataEntry.SETTLEMENT_PRICE,
-            pyRofex.MarketDataEntry.CLOSING_PRICE
-        ]
-        resp = pyRofex.get_market_data(ticker=symbol, entries=entries)
-        if resp and resp.get("status") == "OK" and "marketData" in resp:
-            md = resp["marketData"]
-            
-            # Prioridad 1: Último precio operado
-            if md.get("LA") and md["LA"].get("price"):
-                return md["LA"]["price"]
-            
-            # Prioridad 2: Precio de Ajuste (Settlement) - Muy común al Cierre/Fin de Semana
-            if md.get("SE") and md["SE"].get("price"):
-                return md["SE"]["price"]
-                
-            # Prioridad 3: Precio de Cierre
-            if md.get("CL") and md["CL"].get("price"):
-                return md["CL"]["price"]
-                
-    except Exception as e:
-        print(f"⚠️ Error obteniendo precio base REST para {symbol}: {e}")
-        
-    return None
+ARG_STOCKS_WIDGET_2 = [
+    "BMA", "BYMA", "CEPU", "GGAL", "PAMP", "YPFD", "TECO2", "LOMA",
+    "ALUA", "BBAR", "EDN", "IRSA", "METR"
+]
 
-def market_data_handler(message):
-    """Callback que pyRofex llama cada vez que llega un nuevo precio/punta por WS"""
-    try:
-        if message["type"] == "Md":
-            data = message["marketData"]
-            symbol = message["instrumentId"]["symbol"]
-            
-            # Buscamos el Last (precio operado) o Bids/Offers si es caución
-            last_price = None
-            if "LA" in data and data["LA"]:
-                last_price = data["LA"]["price"]
-            elif "BI" in data and data["BI"]:
-                # Puntas compradora para cauciones
-                last_price = data["BI"][0]["price"]
-            
-            if last_price is not None:
-                ROFEX_STATE[symbol] = last_price
-                print(f"📊 [Rofex WS] {symbol}: {last_price}")
-                
-                # Emitir al frontend usando el loop de asyncio de FastAPI
-                if hasattr(app, "state") and hasattr(app.state, "loop"):
-                    asyncio.run_coroutine_threadsafe(
-                        manager.broadcast_command("ROFEX_UPDATE", {
-                            "symbol": symbol,
-                            "price": last_price
-                        }),
-                        app.state.loop
-                    )
-    except Exception as e:
-        print(f"⚠️ Error en market_data_handler: {e}")
+# Mapa de símbolo data912 → ticker en yfinance (sufijo .BA para BYMA)
+ARG_YF_TICKERS = {
+    "BMA": "BMA.BA", "BYMA": "BYMA.BA", "CEPU": "CEPU.BA",
+    "GGAL": "GGAL.BA", "PAMP": "PAMP.BA", "YPFD": "YPFD.BA",
+    "TECO2": "TECO2.BA", "LOMA": "LOMA.BA", "ALUA": "ALUA.BA",
+    "BBAR": "BBAR.BA", "EDN": "EDN.BA", "IRSA": "IRSA.BA", "METR": "METR.BA",
+}
 
-def error_handler(message):
-    print(f"❌ Error pyRofex WS: {message}")
-
-def exception_handler(e):
-    print(f"❌ Excepción pyRofex WS: {e}")
+# Caché de cierres anteriores: {"BMA": 13200.0, ...}
+_prev_closes: dict = {}
+_prev_closes_date: str = ""
 
 app = FastAPI()
 
@@ -133,8 +70,14 @@ class ConnectionManager:
     async def broadcast_command(self, command: str, payload: dict = None):
         """Envía una orden a todos los dashboards conectados"""
         message = {"command": command, "payload": payload or {}}
+        dead = []
         for connection in self.active_connections:
-            await connection.send_json(message)
+            try:
+                await connection.send_json(message)
+            except Exception:
+                dead.append(connection)
+        for connection in dead:
+            self.active_connections.remove(connection)
 
 manager = ConnectionManager()
 
@@ -142,10 +85,20 @@ manager = ConnectionManager()
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
+    # Enviar estado actual al nuevo cliente para evitar esperar el ciclo de 20s
+    for symbol, state in list(ROFEX_STATE.items()):
+        try:
+            if isinstance(state, dict) and "price" in state and "pct_change" in state:
+                await websocket.send_json({
+                    "command": "ROFEX_UPDATE",
+                    "payload": {"symbol": symbol, "price": state["price"], "pct_change": state["pct_change"]}
+                })
+        except Exception:
+            break
     try:
         while True:
             # Mantenemos la conexión abierta escuchando (aunque no manden nada)
-            data = await websocket.receive_text()
+            await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
         print("❌ Terminal desconectada")
@@ -169,18 +122,87 @@ TICKERS_TICKER = [
         "^GSPC", "^DJI", "^IXIC", "^RUT", "^MERV"
         ]
 
-# Lista de activos argentinos a escuchar vía PyRofex
-ROFEX_INSTRUMENTS = [
-    # Futuros Dolar
-    "DLR/FEB26", "DLR/MAR26", "DLR/ABR26", "DLR/MAY26", "DLR/JUN26",
-    "DLR/JUL26", "DLR/AGO26", "DLR/SEP26",
-    # Cauciones
-    "PESOS - 1D", "PESOS - 3D", "PESOS - 7D", "PESOS - 30D",
-    "DOLARES - 1D", "DOLARES - 3D", "DOLARES - 7D", "DOLARES - 30D",
-    # Acciones Spot (BYMA CEDEARS/LIDERES vía RFX en Remarket)
-    "BMA - 48hs", "BYMA - 48hs", "CEPU - 48hs", "GGAL - 48hs", 
-    "PAMP - 48hs", "YPFD - 48hs", "TECO2 - 48hs", "LOMA - 48hs"
-]
+def _fetch_prev_closes_sync() -> dict:
+    """Obtiene el cierre anterior de yfinance para los 13 stocks argentinos. Síncrono."""
+    result = {}
+    for sym, yf_ticker in ARG_YF_TICKERS.items():
+        try:
+            t_obj = yf.Ticker(yf_ticker, session=yf_session)
+            fi = t_obj.fast_info
+            prev = getattr(fi, 'regular_market_previous_close', None) or getattr(fi, 'previous_close', None)
+            if prev and prev > 0:
+                result[sym] = float(prev)
+                print(f"📌 Cierre anterior {sym}: {prev:.2f}")
+        except Exception as e:
+            print(f"⚠️ No se pudo obtener cierre anterior de {yf_ticker}: {e}")
+    return result
+
+
+async def _ensure_prev_closes():
+    """Actualiza _prev_closes si es un nuevo día o si está vacío."""
+    global _prev_closes, _prev_closes_date
+    today = datetime.now().strftime("%Y-%m-%d")
+    if _prev_closes_date == today and _prev_closes:
+        return
+    print("📅 Actualizando cierres anteriores desde yfinance...")
+    closes = await asyncio.to_thread(_fetch_prev_closes_sync)
+    if closes:
+        _prev_closes = closes
+        _prev_closes_date = today
+        print(f"✅ Cierres anteriores cargados: {len(closes)} stocks")
+
+
+# Nueva tarea en segundo plano para obtener cotizaciones de data912 (Tickers Widget 2)
+async def data912_refresh_loop():
+    """Fetches Argentine stocks from data912 every 20s and staggered-broadcasts it."""
+    await asyncio.sleep(2)
+    print("🔥 Iniciando polling de data912.com (Acciones Spot)...")
+    
+    while True:
+        try:
+            # Asegurar que tenemos los cierres anteriores del día
+            await _ensure_prev_closes()
+
+            async with httpx.AsyncClient(verify=False) as client:
+                res = await client.get('https://data912.com/live/arg_stocks', timeout=15)
+                if res.status_code == 200:
+                    data = res.json()
+
+                    found_updates = []
+                    for item in data:
+                        sym = item.get("symbol")
+                        if sym in ARG_STOCKS_WIDGET_2:
+                            # Usamos 'c' = último precio operado (mismo que muestra IOL)
+                            price = float(item.get("c") or 0)
+
+                            # Calculamos pct_change como IOL: (precio_actual - cierre_anterior) / cierre_anterior
+                            # El cierre anterior viene de yfinance .BA que usa los datos de BYMA
+                            prev_close = _prev_closes.get(sym)
+                            if prev_close and prev_close > 0 and price > 0:
+                                pct = (price - prev_close) / prev_close * 100
+                            else:
+                                # Fallback si yfinance no trajo el dato aún
+                                pct = float(item.get("pct_change") or 0)
+
+                            ui_symbol = f"{sym} - 48hs"
+                            ROFEX_STATE[ui_symbol] = {"price": price, "pct_change": pct}
+                            found_updates.append({"symbol": ui_symbol, "price": price, "pct_change": pct})
+                    
+                    # Emitir actualizaciones escalonadas con pequeño delay entre cada una
+                    async def send_staggered(updates):
+                        random.shuffle(updates)
+                        for idx, payload in enumerate(updates):
+                            if idx > 0:
+                                await asyncio.sleep(random.uniform(0.1, 1.2))
+                            await manager.broadcast_command("ROFEX_UPDATE", payload)
+                            print(f"📊 [Data912] {payload['symbol']} → {payload['price']} ({payload['pct_change']:+.2f}%)")
+
+                    asyncio.create_task(send_staggered(found_updates))
+                    
+        except Exception as e:
+            print(f"⚠️ Error obteniendo datos de data912.com: {e}")
+            
+        await asyncio.sleep(20) # Data912 actualiza cada ~20 segundos
 
 async def scout_prewarm_loop():
     """Pre-calienta y mantiene fresco el caché de scout para todos los tickers de rotación."""
@@ -215,19 +237,8 @@ async def startup_event():
     # Mantener caché de market-heatmap actualizado
     asyncio.create_task(heatmap_refresh_loop())
 
-    # Iniciar WebSocket de PyRofex
-    try:
-        pyRofex.init_websocket_connection(
-            market_data_handler=market_data_handler,
-            error_handler=error_handler,
-            exception_handler=exception_handler
-        )
-        # Nos suscribimos a Last (LA), Bids (BI) y Offers (OF)
-        entries = [pyRofex.MarketDataEntry.BIDS, pyRofex.MarketDataEntry.OFFERS, pyRofex.MarketDataEntry.LAST]
-        pyRofex.market_data_subscription(tickers=ROFEX_INSTRUMENTS, entries=entries)
-        print("✅ Suscrito a WS MarketData de Rofex:", ROFEX_INSTRUMENTS)
-    except Exception as e:
-        print(f"❌ Fallo al conectar WS Rofex: {e}")
+    # Iniciar polling background de Data912 en lugar de PyRofex
+    asyncio.create_task(data912_refresh_loop())
 
 # Poné tus credenciales de Twilio acá arriba
 TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID")
@@ -265,7 +276,7 @@ COMPANY_CACHE_TTL = 600  # 10 minutos
 
 def fetch_ticker_data(t):
     try:
-        t_obj = yf.Ticker(t)
+        t_obj = yf.Ticker(t, session=yf_session)
         try:
             info = t_obj.info
             price = info.get('currentPrice') or info.get('regularMarketPrice')
@@ -576,8 +587,8 @@ async def receive_whatsapp(Body: str = Form(None), From: str = Form(None)):
 @app.get("/api/chart/{ticker}")
 def get_chart_data(ticker: str):
     try:
-        # Pedimos 5 días con intervalo de 5m para tener suficientes puntos para SMAs
-        data = yf.download(ticker, period="5d", interval="5m")
+        # Download usando nuestro session patcheado implícitamente, y suppress errors to avoid crash
+        data = yf.download(ticker, period="5d", interval="5m", ignore_tz=True, session=yf_session)
         
         if data.empty:
             print(f"⚠️ No hay datos para {ticker}")
@@ -631,12 +642,8 @@ async def get_prices():
         "^GSPC", "^DJI", "^IXIC", "^RUT", "^MERV"
     ]
     
-    # Rellenar ROFEX_STATE base de forma asíncrona si no están
-    for symbol in ROFEX_INSTRUMENTS:
-        if symbol not in ROFEX_STATE:
-            # Para no bloquear el loop, lanzamos threads cortos por cada símbolo vacío
-            price = await asyncio.to_thread(get_rofex_initial_price, symbol)
-            ROFEX_STATE[symbol] = price
+    # Ya no se hace polling inicial aquí, data912_refresh_loop llenará ROFEX_STATE.
+    # Si alguna vez está vacío se mandan valores 0 o vacíos.
             
     # Disparamos todas las consultas en paralelo para el Ticker global
     tasks = [asyncio.to_thread(fetch_ticker_data, t) for t in tickers]
