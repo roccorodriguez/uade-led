@@ -6,6 +6,7 @@ requests
 curl-cffi
 google-genai
 edge-tts
+deep-translator
 httpx
 python-multipart
 python-dotenv

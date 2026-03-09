@@ -880,6 +880,7 @@ let _physicsLoopId = null;
 
 const BubbleSwarm = ({ data, flashMap }) => {
   const instanceRefs = useRef({}); // { [nodeId]: el } — solo para esta instancia
+  const labelRef = useRef(null);
   const [initialized, setInitialized] = useState(_sharedNodes.list.length > 0);
 
   // 1. Inicializar nodos compartidos (solo la primera instancia que monte)
@@ -939,8 +940,8 @@ const BubbleSwarm = ({ data, flashMap }) => {
         node.vx *= Math.pow(0.92, dt);
         node.vy *= Math.pow(0.92, dt);
         node.vx += (centerX - node.x) * 0.0001 * dt;
-        const gravityTargetY = node.change > 0 ? 50 : (node.change < 0 ? height - 50 : centerY);
-        node.vy += (gravityTargetY - node.y) * 0.0004 * dt;
+        const gravityTargetY = node.change > 0 ? height * 0.38 : (node.change < 0 ? height * 0.62 : centerY);
+        node.vy += (gravityTargetY - node.y) * 0.0003 * dt;
         if (node.flash > 0) node.flash = Math.max(0, node.flash - 0.02 * dt);
       });
 
@@ -995,6 +996,15 @@ const BubbleSwarm = ({ data, flashMap }) => {
         });
       });
 
+      // Mover el label "Argentina" a la esquina opuesta si alguna burbuja lo tapa
+      if (labelRef.current) {
+        const labelBlocked = _sharedNodes.list.some(
+          node => (node.x - node.r) < 72 && (node.y - node.r) < 22
+        );
+        labelRef.current.style.top    = labelBlocked ? 'auto' : '6px';
+        labelRef.current.style.bottom = labelBlocked ? '6px'  : 'auto';
+      }
+
       _physicsLoopId = requestAnimationFrame(tick);
     };
 
@@ -1018,7 +1028,7 @@ const BubbleSwarm = ({ data, flashMap }) => {
 
   return (
     <div className="w-full h-full relative overflow-hidden bg-[#111]">
-      <div className="absolute top-2 left-4 text-[9px] font-bold text-zinc-500 uppercase tracking-widest z-0 pointer-events-none">
+      <div ref={labelRef} className="absolute left-4 text-[9px] font-bold text-zinc-500 uppercase tracking-widest z-0 pointer-events-none" style={{ top: '6px' }}>
         Argentina
       </div>
       <div className="absolute inset-0 pointer-events-none z-0 flex flex-col justify-between">
@@ -1419,19 +1429,60 @@ export default function App() {
         }
 
         if (data.command === "SHOW_COMPANY_DATA") {
-          setCompanyData(data.payload);
-          // Auto-dismiss a los 30 segundos
           if (aiDismissTimer.current) clearTimeout(aiDismissTimer.current);
-          aiDismissTimer.current = setTimeout(() => {
-            setIsAiActive(false);
-            setCompanyData(null);
-          }, 30000);
+
+          const pendingPayload = data.payload;
+
+          // Mostrar la tarjeta y arrancar el auto-dismiss
+          const revealCard = () => {
+            setCompanyData(pendingPayload);
+            aiDismissTimer.current = setTimeout(() => {
+              setIsAiActive(false);
+              setCompanyData(null);
+              window.speechSynthesis?.cancel();
+            }, 30000);
+          };
+
+          // --- TTS: mantener "PROCESANDO" hasta que llegue el audio ---
+          if (pendingPayload) {
+            // Fallback: si el TTS tarda más de 15s, mostrar la tarjeta igual
+            const fallbackTimer = setTimeout(revealCard, 15000);
+
+            (async () => {
+              try {
+                const resp = await fetch(`${API_BASE}/api/tts-company`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(pendingPayload),
+                });
+                clearTimeout(fallbackTimer);
+                if (resp.ok) {
+                  const blob = await resp.blob();
+                  const audioUrl = URL.createObjectURL(blob);
+                  const audio = new Audio(audioUrl);
+                  revealCard();   // Mostrar tarjeta justo cuando el audio está listo
+                  audio.play();
+                  window._ttsAudio = audio;
+                } else {
+                  revealCard();
+                }
+              } catch (e) {
+                clearTimeout(fallbackTimer);
+                console.warn("TTS error:", e);
+                revealCard();
+              }
+            })();
+          } else {
+            revealCard();
+          }
         }
 
         if (data.command === "STOP_AI_MODE") {
           setIsAiActive(false);
           setCompanyData(null);
           if (aiDismissTimer.current) clearTimeout(aiDismissTimer.current);
+          window.speechSynthesis?.cancel();
+          if (window._ttsAudio) { window._ttsAudio.pause(); window._ttsAudio = null; }
         }
 
         // Manejador del WebSocket de Cotizaciones ROFEX (Mercado Local)

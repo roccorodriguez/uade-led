@@ -6,7 +6,7 @@ import requests
 from curl_cffi import requests as cffi_requests
 import pandas as pd
 from bs4 import BeautifulSoup
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import asyncio
 from fastapi import WebSocket, WebSocketDisconnect
 from typing import List
@@ -20,6 +20,15 @@ import re
 from dotenv import load_dotenv
 load_dotenv()
 import random
+
+# Zona horaria de Argentina (UTC-3, sin DST)
+TZ_AR = timezone(timedelta(hours=-3))
+def now_ar() -> datetime:
+    return datetime.now(TZ_AR)
+import tempfile
+import edge_tts
+from deep_translator import GoogleTranslator
+from fastapi.responses import FileResponse, StreamingResponse
 from yfinance import base
 
 # --- YAHOO FINANCE CRUMB BYPASS ---
@@ -141,7 +150,7 @@ def _fetch_prev_closes_sync() -> dict:
 async def _ensure_prev_closes():
     """Actualiza _prev_closes si es un nuevo día o si está vacío."""
     global _prev_closes, _prev_closes_date
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = now_ar().strftime("%Y-%m-%d")
     if _prev_closes_date == today and _prev_closes:
         return
     print("📅 Actualizando cierres anteriores desde yfinance...")
@@ -310,7 +319,7 @@ def parse_relative_time(relative_str):
     en un HH:MM para mostrar y un unix timestamp para ordenar correctamente.
     Retorna: (display_time: str, timestamp: int)
     """
-    now = datetime.now()
+    now = now_ar()
     try:
         clean_str = relative_str.lower().replace('ago', '').strip()
 
@@ -556,6 +565,116 @@ async def fetch_company_data(company_name: str):
     except Exception as e:
         print(f"❌ Error scraping Yahoo Finance para {ticker_symbol}: {e}")
         return None
+
+
+@app.get("/api/tts")
+async def text_to_speech(text: str, voice: str = "es-AR-ElenaNeural"):
+    """Fallback: traduce texto al español y genera audio MP3 con voz neural argentina."""
+    try:
+        translated = await asyncio.to_thread(
+            lambda: GoogleTranslator(source='auto', target='es').translate(text)
+        )
+        communicate = edge_tts.Communicate(text=translated, voice=voice, rate="+5%")
+        audio_chunks = []
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_chunks.append(chunk["data"])
+        audio_data = b"".join(audio_chunks)
+        import io
+        return StreamingResponse(io.BytesIO(audio_data), media_type="audio/mpeg",
+                                 headers={"Cache-Control": "no-cache"})
+    except Exception as e:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tts-company")
+async def tts_company_summary(payload: dict):
+    """Genera un resumen personalizado en español con Gemini Gemma 3 27B y lo convierte a voz."""
+    try:
+        from google import genai as google_genai
+
+        ticker     = payload.get("ticker", "N/A")
+        name       = payload.get("name", "N/A")
+        ind        = payload.get("indicators", {})
+        income     = payload.get("income", {})
+
+        price       = ind.get("price")
+        change_pct  = ind.get("change_pct")
+        sector      = ind.get("sector", "N/A")
+        market_cap  = ind.get("marketCap")
+        trailing_pe = ind.get("trailingPE")
+        forward_pe  = ind.get("forwardPE")
+        beta        = ind.get("beta")
+        roe         = ind.get("returnOnEquity")
+        profit_m    = ind.get("profitMargins")
+        debt_eq     = ind.get("debtToEquity")
+        week52h     = ind.get("fiftyTwoWeekHigh")
+        week52l     = ind.get("fiftyTwoWeekLow")
+        div_yield   = ind.get("dividendYield")
+        ev_ebitda   = ind.get("enterpriseToEbitda")
+
+        def fmt(v, decimals=2):
+            return round(v, decimals) if v is not None else "N/D"
+        def fmt_pct(v):
+            return f"{round(v*100, 2)}%" if v is not None else "N/D"
+        def fmt_large(v):
+            if v is None: return "N/D"
+            if v >= 1e12: return f"{v/1e12:.2f}T"
+            if v >= 1e9:  return f"{v/1e9:.2f}B"
+            return f"{v/1e6:.0f}M"
+
+        # Últimas filas de ingresos (income es una lista de dicts por período)
+        last_income = income[-1] if isinstance(income, list) and income else {}
+        last_rev = last_income.get("revenue")
+        last_ni  = last_income.get("netIncome")
+
+        prompt = f"""Sos un analista financiero de un panel LED de trading. Generá un resumen oral breve (máximo 5 oraciones) en de la siguiente acción, como si lo dijeras en vivo al público, pero sin ser muy informal. Sé directo, claro y natural. No uses emojis, listas ni formato markdown.
+
+Acción: {ticker} — {name}
+Sector: {sector}
+Precio actual: ${fmt(price)} ({'+' if change_pct and change_pct>0 else ''}{fmt(change_pct)}% hoy)
+Capitalización: {fmt_large(market_cap)}
+P/E Trailing: {fmt(trailing_pe)} | P/E Forward: {fmt(forward_pe)}
+Beta: {fmt(beta)}
+ROE: {fmt_pct(roe)}
+Margen neto: {fmt_pct(profit_m)}
+Deuda/Capital: {fmt(debt_eq)}
+Rango 52 semanas: ${fmt(week52l)} – ${fmt(week52h)}
+EV/EBITDA: {fmt(ev_ebitda)}
+Rendimiento dividendo: {fmt_pct(div_yield)}
+Ingresos (últ. período): {fmt_large(last_rev)}
+Beneficio neto (últ. período): {fmt_large(last_ni)}
+
+Resumen oral:"""
+
+        client = google_genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+        response = await asyncio.to_thread(
+            lambda: client.models.generate_content(
+                model="gemma-3-27b-it",
+                contents=prompt
+            )
+        )
+        summary_es = response.text.strip()
+        print(f"🤖 Gemini summary: {summary_es[:120]}...")
+
+        # Convertir a voz con Edge TTS
+        communicate = edge_tts.Communicate(text=summary_es, voice="es-AR-ElenaNeural", rate="+5%")
+        audio_chunks = []
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_chunks.append(chunk["data"])
+        audio_data = b"".join(audio_chunks)
+
+        import io
+        return StreamingResponse(io.BytesIO(audio_data), media_type="audio/mpeg",
+                                 headers={"Cache-Control": "no-cache"})
+
+    except Exception as e:
+        print(f"❌ Error en tts-company: {e}")
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/whatsapp")
 async def receive_whatsapp(Body: str = Form(None), From: str = Form(None)):
@@ -805,7 +924,7 @@ async def scrape_econ_calendar():
     Filtra por: EE.UU., Eurozona, Japón, China, Brasil y Argentina.
     El resultado se cachea y sólo se refresca una vez por día."""
     global _econ_calendar
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = now_ar().strftime("%Y-%m-%d")
     if _econ_calendar["date"] == today_str and _econ_calendar["events"]:
         return  # Ya tenemos datos del día de hoy
 
@@ -856,7 +975,7 @@ async def scrape_econ_calendar():
         events = []
 
         # Prefijo de fecha en el formato que usa investing.com en data-event-datetime
-        today_prefix = datetime.now().strftime("%Y/%m/%d")
+        today_prefix = now_ar().strftime("%Y/%m/%d")
 
         for row in soup.find_all("tr", class_="js-event-item"):
             # Filtrar solo eventos del día de hoy según la fecha local del servidor
@@ -1019,7 +1138,7 @@ def get_latest_scraping():
                     display_time, timestamp = parse_relative_time(rel_time)
                     new_entries.append({
                         "headline": headline,
-                        "date": datetime.now().strftime("%d/%m/%y"),
+                        "date": now_ar().strftime("%d/%m/%y"),
                         "time": display_time,       # HH:MM para mostrar
                         "timestamp": timestamp,     # Unix timestamp para ordenar
                         "ticker": ticker,
