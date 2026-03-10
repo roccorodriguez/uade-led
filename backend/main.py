@@ -72,6 +72,15 @@ class ConnectionManager:
         await websocket.accept()
         self.active_connections.append(websocket)
         print(f"📡 Terminal conectada al LED: {len(self.active_connections)}")
+        # Replay del último AI mode si sigue vigente (< 35s)
+        if _pending_ai_data and (time.time() - _pending_ai_ts) < 35:
+            try:
+                await websocket.send_json({"command": "START_AI_MODE", "payload": {}})
+                await asyncio.sleep(0.05)
+                await websocket.send_json({"command": "SHOW_COMPANY_DATA", "payload": _pending_ai_data})
+                print("📡 Reenviado AI data pendiente a nueva conexión WS")
+            except Exception as e:
+                print(f"⚠️ Error en replay de AI data: {e}")
 
     def disconnect(self, websocket: WebSocket):
         self.active_connections.remove(websocket)
@@ -278,6 +287,11 @@ def get_yahoo_session():
 
 # --- CACHÉ TTL PARA DATOS DE EMPRESA ---
 _company_cache = {}
+
+# --- ESTADO GLOBAL DEL MODO AI ---
+_ai_processing = False          # Lock para evitar procesamiento concurrente
+_pending_ai_data: dict = None   # Último payload SHOW_COMPANY_DATA (para replay en reconexión)
+_pending_ai_ts: float = 0       # Timestamp del último AI mode activado
 
 # --- CACHÉ CALENDARIO ECONÓMICO (1 scrape por día) ---
 _econ_calendar = {"events": [], "date": None}
@@ -547,7 +561,13 @@ async def fetch_company_data(company_name: str):
                 ns_inner = ai_analysis.get('data', {}).get('news_summary', {}).get('news_summary', {})
                 tldr = ns_inner.get('tldr') if isinstance(ns_inner, dict) else None
                 if tldr:
-                    scout_summary = re.sub(r'\*\*([^*]+)\*\*', r'\1', tldr)
+                    clean = re.sub(r'\*\*([^*]+)\*\*', r'\1', tldr)
+                    try:
+                        scout_summary = await asyncio.to_thread(
+                            lambda: GoogleTranslator(source='auto', target='es').translate(clean)
+                        )
+                    except Exception:
+                        scout_summary = clean
             except:
                 pass
 
@@ -678,29 +698,54 @@ Resumen oral:"""
 
 @app.post("/whatsapp")
 async def receive_whatsapp(Body: str = Form(None), From: str = Form(None)):
+    global _ai_processing, _pending_ai_data, _pending_ai_ts
     print(f"\n--- 📥 NUEVO MENSAJE DE {From} ---")
-    
-    if Body and Body.strip():
-        company_name = Body.strip()
-        print(f"🔍 Buscando empresa: '{company_name}'")
-        
-        # 1. Notificar al Dashboard para activar animacion
+
+    if not (Body and Body.strip()):
+        return {"status": "ok"}
+
+    # Evitar procesamiento concurrente (dos mensajes al mismo tiempo)
+    if _ai_processing:
+        print("⚠️ Ya hay un procesamiento en curso, ignorando mensaje duplicado")
+        return {"status": "busy"}
+
+    _ai_processing = True
+    company_name = Body.strip()
+    print(f"🔍 Buscando empresa: '{company_name}'")
+
+    try:
+        # 1. Notificar al Dashboard para activar animación de carga
         await manager.broadcast_command("START_AI_MODE")
         print("📡 Dashboard notificado: START_AI_MODE")
-        
-        # 2. Buscar y obtener datos financieros
+
+        # 2. Buscar datos financieros (con un reintento si falla)
         data = await fetch_company_data(company_name)
-        
+        if data is None:
+            print("⚠️ Primer intento falló, reintentando en 3s...")
+            await asyncio.sleep(3)
+            data = await fetch_company_data(company_name)
+
         if data:
             print(f"✅ Datos obtenidos para {data['ticker']}, enviando al dashboard")
+            _pending_ai_data = data
+            _pending_ai_ts = time.time()
             await manager.broadcast_command("SHOW_COMPANY_DATA", data)
             print("📡 Dashboard notificado: SHOW_COMPANY_DATA")
+            # Limpiar el pending después de 35s (coincide con el auto-dismiss del frontend)
+            async def _clear_pending():
+                await asyncio.sleep(35)
+                global _pending_ai_data, _pending_ai_ts
+                _pending_ai_data = None
+                _pending_ai_ts = 0
+            asyncio.create_task(_clear_pending())
         else:
-            # Si no encontramos la empresa, cancelamos el modo AI
-            await asyncio.sleep(2)
+            print("❌ No se pudo obtener datos tras dos intentos, cancelando AI mode")
+            await asyncio.sleep(1)
             await manager.broadcast_command("STOP_AI_MODE")
             print("📡 Dashboard notificado: STOP_AI_MODE (empresa no encontrada)")
-    
+    finally:
+        _ai_processing = False
+
     return {"status": "ok"}
 
 @app.get("/api/chart/{ticker}")
@@ -1082,6 +1127,14 @@ async def get_scout_data(ticker: str):
     return {"error": "No data found"}
 
 
+def _translate_headline(text: str) -> str:
+    """Traduce un titular al español. Devuelve el original si falla."""
+    try:
+        return GoogleTranslator(source='auto', target='es').translate(text)
+    except Exception as e:
+        print(f"⚠️ Error traduciendo titular: {e}")
+        return text
+
 @app.get("/api/market-news")
 def get_latest_scraping():
     global NEWS_STACK
@@ -1107,8 +1160,9 @@ def get_latest_scraping():
             try:
                 title_tag = art.find('h3')
                 if not title_tag: continue
-                headline = title_tag.text.strip().upper()
-                
+                headline_raw = title_tag.text.strip()
+                headline_en = headline_raw.upper()  # clave de cache (inglés)
+
                 # --- LÓGICA DE CACHÉ DE TIEMPO ---
                 pub_div = art.find('div', class_='publishing yf-bmkwve')
                 if pub_div:
@@ -1117,30 +1171,31 @@ def get_latest_scraping():
                     rel_time = parts[-1] if len(parts) > 1 else "0m ago"
                 else:
                     source, rel_time = "YF", "0m ago"
-                    
+
                 # Filtro de fuentes
-                if source == 'STOCKSTORY' or source == 'ASSOCIATED PRESS FINANCE':
+                if source in ('STOCKSTORY', 'ASSOCIATED PRESS FINANCE', 'YAHOO PERSONAL FINANCE'):
                     continue
 
-                # Buscamos si la noticia YA está en nuestro STACK actual
-                existing_news = next((news for news in NEWS_STACK if news['headline'] == headline), None)
-                
+                # Buscamos si la noticia YA está en nuestro STACK (por titular en inglés)
+                existing_news = next((news for news in NEWS_STACK if news.get('headline_en', news['headline']) == headline_en), None)
+
                 if existing_news:
                     # Si ya la tenemos, usamos la versión que ya está en memoria
-                    # Esto mantiene el "time" original que calculamos la primera vez
+                    # Esto mantiene el "time" original y la traducción ya hecha
                     new_entries.append(existing_news)
                 else:
-                    # SI ES NUEVA: Recién acá calculamos todo
+                    # SI ES NUEVA: traducir al español y calcular tiempo
                     ticker_span = art.find('span', class_='symbol yf-1pdfbgz')
                     ticker = ticker_span.text.strip().replace("^", "") if ticker_span else "MKT"
 
-                    # Creamos la nueva entrada con el tiempo fijo "congelado"
+                    headline_es = _translate_headline(headline_raw).upper()
                     display_time, timestamp = parse_relative_time(rel_time)
                     new_entries.append({
-                        "headline": headline,
+                        "headline_en": headline_en,  # inglés original (para cache matching)
+                        "headline": headline_es,     # español (para mostrar en el widget)
                         "date": now_ar().strftime("%d/%m/%y"),
-                        "time": display_time,       # HH:MM para mostrar
-                        "timestamp": timestamp,     # Unix timestamp para ordenar
+                        "time": display_time,
+                        "timestamp": timestamp,
                         "ticker": ticker,
                         "source": source
                     })

@@ -175,13 +175,11 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
           await new Promise(r => setTimeout(r, 1600 + 3500));
           if (cancelled) return;
 
-          _chartUpdate({ lineClip: 0 });
+          // Fundir línea y escalas al mismo tiempo
+          _chartUpdate({ lineClip: 0, scalesOpacity: 0 });
 
-          await new Promise(r => setTimeout(r, 800));
-          if (cancelled) return;
-          _chartUpdate({ scalesOpacity: 0 });
-
-          await new Promise(r => setTimeout(r, 500));
+          // Esperar a que ambas transiciones completen (1500ms + buffer)
+          await new Promise(r => setTimeout(r, 1700));
           if (cancelled) return;
 
           onCycleComplete();
@@ -307,21 +305,18 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
 
   return (
     <div
-      className="w-full h-full relative font-mono flex flex-col bg-transparent transition-opacity duration-300"
-      style={{ opacity: series[0].data.length > 0 ? 1 : 0 }}
+      className="w-full h-full relative font-mono flex flex-col bg-transparent"
     >
 
       {/* ── CONTENEDOR DEL GRÁFICO ── */}
-      <div className="flex-1 relative mt-[1px]">
-        {/* CSS para animar fundido / barrido */}
+      <div
+        className="flex-1 relative mt-[1px]"
+        style={{ opacity: scalesOpacity, transition: 'opacity 1500ms ease-in-out' }}
+      >
+        {/* CSS solo para el barrido de la serie */}
         <style>{`
-          .apexcharts-xaxis-texts-g, .apexcharts-yaxis-texts-g {
-            transition: opacity 1500ms ease-in-out !important;
-            opacity: ${scalesOpacity};
-          }
-          /* Grid stays static, only series fade/clip away */
-          .apexcharts-series-group, 
-          .apexcharts-area-series, 
+          .apexcharts-series-group,
+          .apexcharts-area-series,
           .apexcharts-line-series {
             transition: clip-path 1500ms ease-in-out !important;
             clip-path: inset(0 ${100 - lineClip}% 0 0);
@@ -996,14 +991,7 @@ const BubbleSwarm = ({ data, flashMap }) => {
         });
       });
 
-      // Mover el label "Argentina" a la esquina opuesta si alguna burbuja lo tapa
-      if (labelRef.current) {
-        const labelBlocked = _sharedNodes.list.some(
-          node => (node.x - node.r) < 72 && (node.y - node.r) < 22
-        );
-        labelRef.current.style.top    = labelBlocked ? 'auto' : '6px';
-        labelRef.current.style.bottom = labelBlocked ? '6px'  : 'auto';
-      }
+      // El label "Argentina" siempre queda fijo arriba (no necesita actualización dinámica)
 
       _physicsLoopId = requestAnimationFrame(tick);
     };
@@ -1028,7 +1016,7 @@ const BubbleSwarm = ({ data, flashMap }) => {
 
   return (
     <div className="w-full h-full relative overflow-hidden bg-[#111]">
-      <div ref={labelRef} className="absolute left-4 text-[9px] font-bold text-zinc-500 uppercase tracking-widest z-0 pointer-events-none" style={{ top: '6px' }}>
+      <div ref={labelRef} className="absolute left-4 text-[9px] font-bold text-zinc-500 uppercase tracking-widest pointer-events-none" style={{ top: '6px', zIndex: 1 }}>
         Argentina
       </div>
       <div className="absolute inset-0 pointer-events-none z-0 flex flex-col justify-between">
@@ -1069,47 +1057,59 @@ const MarketHeatmap = () => {
 
   useEffect(() => {
     let active = true;
+    let isFirstLoad = true;
+    const staggerTimers = [];
+
     const fetchHeatmap = async () => {
       try {
         const res = await fetch(`${API_BASE}/api/market-heatmap`);
         const result = await res.json();
 
-        if (active && result && result.commodities && result.indices) {
-          setData(prev => {
-            // Check for flashes
-            const newFlash = { ...flashMap };
+        if (!active || !result || !result.commodities || !result.indices) return;
 
-            const checkFlashes = (newItems, oldItems, prefix) => {
-              if (!newItems || !oldItems) return;
-              newItems.forEach((item, i) => {
-                const oldItem = oldItems[i];
-                if (oldItem && item.price !== oldItem.price) {
-                  const direction = parseFloat(item.price) > parseFloat(oldItem.price) ? 'up' : 'down';
-                  const key = `${prefix}_${item.symbol}`;
-                  newFlash[key] = direction;
-
-                  // Clear flash after 800ms
-                  setTimeout(() => {
-                    setFlashMap(current => {
-                      const copy = { ...current };
-                      delete copy[key];
-                      return copy;
-                    });
-                  }, 800);
-                }
-              });
-            };
-
-            checkFlashes(result.commodities, prev.commodities, 'comm');
-            checkFlashes(result.indices, prev.indices, 'idx');
-
-            if (Object.keys(newFlash).length > Object.keys(flashMap).length) {
-              setFlashMap(newFlash);
-            }
-
-            return result;
-          });
+        if (isFirstLoad) {
+          // Primera carga: todo de golpe, sin stagger
+          setData(result);
+          isFirstLoad = false;
+          return;
         }
+
+        // Siguientes actualizaciones: stagger por ítem
+        const allItems = [
+          ...result.commodities.map((item, i) => ({ item, type: 'commodities', idx: i, prefix: 'comm' })),
+          ...result.indices.map((item, i) => ({ item, type: 'indices', idx: i, prefix: 'idx' })),
+        ];
+
+        allItems.forEach(({ item, type, idx, prefix }) => {
+          const delay = Math.random() * 3000;
+          const timer = setTimeout(() => {
+            if (!active) return;
+            setData(prev => {
+              const arr = prev[type];
+              if (!arr || !arr[idx]) return prev;
+              const oldItem = arr[idx];
+              const changed = item.price !== oldItem.price;
+
+              if (changed) {
+                const direction = parseFloat(item.price) > parseFloat(oldItem.price) ? 'up' : 'down';
+                const key = `${prefix}_${item.symbol}`;
+                setFlashMap(fm => ({ ...fm, [key]: direction }));
+                setTimeout(() => {
+                  setFlashMap(current => {
+                    const copy = { ...current };
+                    delete copy[key];
+                    return copy;
+                  });
+                }, 800);
+              }
+
+              const newArr = [...arr];
+              newArr[idx] = item;
+              return { ...prev, [type]: newArr };
+            });
+          }, delay);
+          staggerTimers.push(timer);
+        });
       } catch (e) {
         console.error("Heatmap fetch error", e);
       }
@@ -1120,6 +1120,7 @@ const MarketHeatmap = () => {
     return () => {
       active = false;
       clearInterval(interval);
+      staggerTimers.forEach(clearTimeout);
     };
   }, []);
 
@@ -1430,6 +1431,8 @@ export default function App() {
 
         if (data.command === "SHOW_COMPANY_DATA") {
           if (aiDismissTimer.current) clearTimeout(aiDismissTimer.current);
+          // Garantizar AI mode activo aunque se haya perdido START_AI_MODE (ej. reconexión WS)
+          setIsAiActive(true);
 
           const pendingPayload = data.payload;
 
@@ -1553,21 +1556,12 @@ export default function App() {
         transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
         className="w-[512px] h-full border-r border-[#333] relative shrink-0 overflow-hidden bg-[#111111]"
       >
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={typeof idx !== 'undefined' ? idx : 'chart'}
-            initial={{ opacity: 0, filter: 'blur(3px)' }}
-            animate={{ opacity: 1, filter: 'blur(0px)' }}
-            exit={{ opacity: 0, filter: 'blur(3px)' }}
-            transition={{ duration: 0.6, ease: "easeInOut" }}
-            className="absolute inset-0 w-full h-full"
-          >
-            <FinancialChart
-              ticker={typeof TICKERS_ROTATION !== 'undefined' ? TICKERS_ROTATION[idx] : 'SPY'}
-              onCycleComplete={() => setIdx(i => (i + 1) % TICKERS_ROTATION.length)}
-            />
-          </motion.div>
-        </AnimatePresence>
+        <div className="absolute inset-0 w-full h-full">
+          <FinancialChart
+            ticker={TICKERS_ROTATION[idx]}
+            onCycleComplete={() => setIdx(i => (i + 1) % TICKERS_ROTATION.length)}
+          />
+        </div>
       </motion.div>
 
       {/* W2: MARKET WATCH (576px) */}
@@ -1631,7 +1625,7 @@ export default function App() {
                 </div>
                 <div className="flex items-center gap-1.5 px-3 py-1 rounded-sm bg-red-500/10 border border-red-500/20">
                   <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse"></span>
-                  <span className="text-red-400 text-[8px] font-bold tracking-[0.15em] -translate-y-[1.5px]">EN VIVO</span>
+                  <span className="text-red-400 text-[8px] font-bold tracking-[0.15em] -translate-y-[0.5px]">EN VIVO</span>
                 </div>
               </div>
               {/* Contenido noticias */}
