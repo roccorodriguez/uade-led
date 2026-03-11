@@ -868,6 +868,22 @@ const _bubbleInitialValues = {
   "ALUA - 48hs": 850.00, "BBAR - 48hs": 6885.00, "EDN - 48hs": 1876.00,
   "IRSA - 48hs": 2140.00, "METR - 48hs": 1820.00,
 };
+
+const _bubbleFixedPositions = {
+  "YPFD": { x: 130, y: 70 },
+  "ALUA": { x: 70, y: 130 },
+  "TECO2": { x: 150, y: 150 },
+  "PAMP": { x: 230, y: 60 },
+  "BMA": { x: 220, y: 140 },
+  "METR": { x: 300, y: 30 },
+  "LOMA": { x: 310, y: 90 },
+  "EDN": { x: 290, y: 150 },
+  "GGAL": { x: 400, y: 60 },
+  "BBAR": { x: 370, y: 140 },
+  "BYMA": { x: 460, y: 130 },
+  "CEPU": { x: 490, y: 60 },
+  "IRSA": { x: 530, y: 100 },
+};
 // Singleton: nodos y refs de DOM compartidos entre todas las instancias del componente
 const _sharedNodes = { list: [] };
 const _sharedDomRefs = {}; // { [nodeId]: Set<HTMLElement> }
@@ -884,10 +900,13 @@ const BubbleSwarm = ({ data, flashMap }) => {
       const width = 576, height = 192;
       _sharedNodes.list = Object.keys(_bubbleInitialValues).map((sym) => {
         const specs = _bubbleGetWeightAndSize(sym);
+        const label = sym.split(' ')[0];
+        const pos = _bubbleFixedPositions[label] || { x: width / 2, y: height / 2 };
         return {
-          id: sym, label: sym.split(' ')[0],
-          x: Math.random() * width, y: Math.random() * height,
-          vx: (Math.random() - 0.5) * 2, vy: (Math.random() - 0.5) * 2,
+          id: sym, label: label,
+          x: pos.x, y: pos.y,
+          tgtX: pos.x, tgtY: pos.y,
+          vx: 0, vy: 0,
           r: specs.r, mass: specs.mass,
           val: _bubbleInitialValues[sym], change: 0, flash: 0,
         };
@@ -934,9 +953,9 @@ const BubbleSwarm = ({ data, flashMap }) => {
       nodes.forEach(node => {
         node.vx *= Math.pow(0.92, dt);
         node.vy *= Math.pow(0.92, dt);
-        node.vx += (centerX - node.x) * 0.0001 * dt;
-        const gravityTargetY = node.change > 0 ? height * 0.38 : (node.change < 0 ? height * 0.62 : centerY);
-        node.vy += (gravityTargetY - node.y) * 0.0003 * dt;
+        // Gently pull them to their assigned structural targets to maintain layout
+        node.vx += (node.tgtX - node.x) * 0.002 * dt;
+        node.vy += (node.tgtY - node.y) * 0.002 * dt;
         if (node.flash > 0) node.flash = Math.max(0, node.flash - 0.02 * dt);
       });
 
@@ -1081,7 +1100,7 @@ const MarketHeatmap = () => {
         ];
 
         allItems.forEach(({ item, type, idx, prefix }) => {
-          const delay = Math.random() * 3000;
+          const delay = Math.random() * 26000; // Spread updates smoothly over the 28s polling window
           const timer = setTimeout(() => {
             if (!active) return;
             setData(prev => {
@@ -1116,7 +1135,8 @@ const MarketHeatmap = () => {
     };
 
     fetchHeatmap();
-    const interval = setInterval(fetchHeatmap, 5000);
+    // Poll every 28s -> ensures all stagger timers finish before next poll prevents duplicate flashes
+    const interval = setInterval(fetchHeatmap, 28000);
     return () => {
       active = false;
       clearInterval(interval);
@@ -1281,9 +1301,9 @@ export default function App() {
           // Primera carga: todo instantáneo, sin flash
           setPrices(newPrices);
         } else {
-          // Actualizaciones siguientes: escalonar cada ticker con delay aleatorio
+          // Actualizaciones siguientes: escalonar cada ticker con delay aleatorio a lo largo de 26s
           newPrices.forEach((p, i) => {
-            const delay = Math.random() * 3000;
+            const delay = Math.random() * 26000;
             const timer = setTimeout(() => {
               const oldPrice = prev[i];
               const changed = oldPrice && parseFloat(p.price) !== parseFloat(oldPrice.price);
@@ -1827,22 +1847,34 @@ const Clock = ({ city, zone }) => {
   const mins = timeInZone.getMinutes();
   const secs = timeInZone.getSeconds();
 
-  const hourDeg = (hrs % 12) * 30 + mins * 0.5 + secs * (0.5 / 60);
-  const minDeg = mins * 6 + secs * 0.1;
+  const rawHourDeg = (hrs % 12) * 30 + mins * 0.5 + secs * (0.5 / 60);
+  const rawMinDeg = mins * 6 + secs * 0.1;
+  const rawSecDeg = secs * 6;
 
-  // Accumulated rotation — always increases so CSS transition never animates backwards
-  const prevSecsRef = useRef(secs);
-  const accSecRef = useRef(secs * 6);
-  const [secDeg, setSecDeg] = useState(secs * 6);
+  // Accumulated rotation — always increases so CSS transitions never animate backwards
+  const prevRawRef = useRef({ h: rawHourDeg, m: rawMinDeg, s: rawSecDeg });
+  const accRef = useRef({ h: rawHourDeg, m: rawMinDeg, s: rawSecDeg });
+  const [degs, setDegs] = useState({ h: rawHourDeg, m: rawMinDeg, s: rawSecDeg });
 
   useEffect(() => {
-    if (secs !== prevSecsRef.current) {
-      const delta = secs - prevSecsRef.current;
-      accSecRef.current += (delta > 0 ? delta : 60 + delta) * 6;
-      prevSecsRef.current = secs;
-      setSecDeg(accSecRef.current);
-    }
-  }, [secs]);
+    const prev = prevRawRef.current;
+    if (rawHourDeg === prev.h && rawMinDeg === prev.m && rawSecDeg === prev.s) return;
+
+    const getDelta = (oldAngle, newAngle) => {
+      let d = newAngle - oldAngle;
+      if (d < -180) d += 360;
+      else if (d > 180) d -= 360;
+      return d;
+    };
+
+    accRef.current = {
+      h: accRef.current.h + getDelta(prev.h, rawHourDeg),
+      m: accRef.current.m + getDelta(prev.m, rawMinDeg),
+      s: accRef.current.s + getDelta(prev.s, rawSecDeg),
+    };
+    prevRawRef.current = { h: rawHourDeg, m: rawMinDeg, s: rawSecDeg };
+    setDegs(accRef.current);
+  }, [rawHourDeg, rawMinDeg, rawSecDeg]);
 
   const dayOfWeek = timeInZone.getDay();
   const minuteOfDay = hrs * 60 + mins;
@@ -2010,7 +2042,7 @@ const Clock = ({ city, zone }) => {
         {/* Hour hand */}
         <g
           style={{
-            transform: `rotate(${hourDeg}deg)`,
+            transform: `rotate(${degs.h}deg)`,
             transformOrigin: `${C}px ${C}px`,
             transition: 'transform 0.4s ease-out',
           }}
@@ -2025,7 +2057,7 @@ const Clock = ({ city, zone }) => {
         {/* Minute hand */}
         <g
           style={{
-            transform: `rotate(${minDeg}deg)`,
+            transform: `rotate(${degs.m}deg)`,
             transformOrigin: `${C}px ${C}px`,
             transition: 'transform 0.4s ease-out',
           }}
@@ -2040,7 +2072,7 @@ const Clock = ({ city, zone }) => {
         {/* Second hand */}
         <g
           style={{
-            transform: `rotate(${secDeg}deg)`,
+            transform: `rotate(${degs.s}deg)`,
             transformOrigin: `${C}px ${C}px`,
             transition: 'transform 0.3s cubic-bezier(0.4, 2.08, 0.55, 0.44)',
           }}
