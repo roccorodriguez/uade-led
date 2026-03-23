@@ -26,32 +26,16 @@ const PremiumNewsFeed = ({ news, activeIdx }) => {
 
   const activeNews = news[activeIdx] || news[0];
 
-  // Aplicar el estilo más premium (Bloomberg) a TODAS las fuentes de noticias
-  const getSourceStyle = (source) => {
-    return {
-      bgGradient: 'from-zinc-800/20 to-black',
-      text: 'text-zinc-200',
-      badge: 'bg-zinc-800/30 border-zinc-700/50 text-zinc-300',
-      progress: 'from-white/60 via-white to-white/60'
-    };
-  };
-
-  const style = getSourceStyle(activeNews.source || '');
-
   return (
-    <div className="w-full h-full relative overflow-hidden bg-[#131313] font-sans">
+    <div className="w-full h-full relative overflow-hidden font-sans" style={{
+      background: 'radial-gradient(ellipse at 40% 35%, #1a1a1a 0%, #0e0e0e 55%, #080808 100%)',
+    }}>
 
-      {/* Dynamic Background Gradients */}
-      <AnimatePresence mode="popLayout">
-        <motion.div
-          key={`bg-${activeNews.id || activeIdx}`}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 1.5, ease: "easeInOut" }}
-          className={`absolute inset-0 bg-gradient-to-br ${style.bgGradient} opacity-40 mix-blend-screen pointer-events-none`}
-        />
-      </AnimatePresence>
+      {/* Vignette — profundidad en los bordes */}
+      <div className="absolute inset-0 pointer-events-none z-10" style={{
+        background: 'radial-gradient(ellipse at 55% 50%, transparent 30%, rgba(0,0,0,0.5) 100%)',
+        boxShadow: 'inset 0 0 60px rgba(0,0,0,0.6)',
+      }} />
 
       <AnimatePresence mode="wait">
         <motion.div
@@ -60,31 +44,40 @@ const PremiumNewsFeed = ({ news, activeIdx }) => {
           animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
           exit={{ opacity: 0, y: -10, filter: 'blur(5px)' }}
           transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-          className="absolute inset-0 px-6 py-4 flex flex-col justify-center"
+          className="absolute inset-0 px-6 py-4 flex flex-col justify-center z-20"
         >
           <div className="flex justify-between items-center mb-3">
-            <span className={`text-[9px] font-bold tracking-[0.2em] uppercase px-2.5 py-1 rounded-sm border backdrop-blur-md ${style.badge} ${style.text}`}>
+            <span className="text-[9px] font-bold tracking-[0.2em] uppercase px-2.5 py-1 rounded-sm" style={{
+              background: 'rgba(7,9,18,0.85)',
+              border: '1px solid rgba(120,130,180,0.18)',
+              boxShadow: '0 2px 10px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.05)',
+              color: 'rgba(180,180,200,0.85)',
+            }}>
               {activeNews.source || 'MERCADOS GLOBALES'}
             </span>
-            <span className="text-[10px] font-medium text-white/40 tracking-wider pt-[1px]">
+            <span className="text-[10px] font-medium tracking-wider" style={{ color: 'rgba(255,255,255,0.35)' }}>
               {activeNews.time || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </span>
           </div>
 
-          <h3 className="text-white/95 text-[15px] font-medium leading-[1.5] tracking-wide line-clamp-3">
+          <h3 className="text-[15px] font-medium leading-[1.5] tracking-wide line-clamp-3" style={{
+            color: 'rgba(255,255,255,0.92)',
+            textShadow: '0 1px 6px rgba(0,0,0,0.8)',
+          }}>
             {activeNews.headline}
           </h3>
         </motion.div>
       </AnimatePresence>
 
-      {/* Modern Progress Bar Line */}
-      <div className="absolute bottom-0 left-0 w-full h-[3px] bg-white/5">
+      {/* Progress Bar */}
+      <div className="absolute bottom-0 left-0 w-full h-[2px] z-20" style={{ background: 'rgba(255,255,255,0.04)' }}>
         <motion.div
           key={`progress-${activeIdx}`}
           initial={{ width: '0%' }}
           animate={{ width: '100%' }}
           transition={{ duration: 6, ease: "linear" }}
-          className={`h-full bg-gradient-to-r ${style.progress}`}
+          className="h-full"
+          style={{ background: 'linear-gradient(to right, rgba(255,255,255,0.3), rgba(255,255,255,0.6), rgba(255,255,255,0.3))' }}
         />
       </div>
     </div>
@@ -304,9 +297,9 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
   };
 
   return (
-    <div
-      className="w-full h-full relative font-mono flex flex-col bg-transparent"
-    >
+    <div className="w-full h-full relative font-mono flex flex-col" style={{
+      background: 'radial-gradient(ellipse at 40% 35%, #1a1a1a 0%, #0e0e0e 55%, #080808 100%)',
+    }}>
 
       {/* ── CONTENEDOR DEL GRÁFICO ── */}
       <div
@@ -324,31 +317,44 @@ const FinancialChart = ({ ticker, onCycleComplete }) => {
         `}
         </style>
 
+        {/* GRÁFICO APEXCHARTS */}
+        <Chart options={options} series={series} type="line" height="100%" width="100%" />
+
+        {/* Vignette — oscurece bordes para dar profundidad al gráfico */}
+        <div className="absolute inset-0 pointer-events-none z-10" style={{
+          background: 'radial-gradient(ellipse at 58% 48%, transparent 28%, rgba(0,0,0,0.52) 100%)',
+          boxShadow: 'inset 0 0 70px rgba(0,0,0,0.65)',
+        }} />
+
         {/* DAY SESSION INFO BOX (LAST PRICE, VARIACIÓN, SMAs) */}
-        <div className="absolute top-[8px] left-[8px] z-10 border border-[#888] rounded-sm bg-[#111111]/70 text-white text-[8px] p-1 w-36 font-bold shadow-md">
-          <div className="text-center mb-[2px] tracking-wide text-[#bbbbbb] pb-[2px] border-b border-[#333]">Sesión de Hoy (<span className="text-white text-[10px]">{ticker}</span>)</div>
+        <div className="absolute top-[8px] left-[8px] z-20 rounded-sm text-white text-[8px] p-1 w-36 font-bold" style={{
+          background: 'rgba(7,9,18,0.90)',
+          border: '1px solid rgba(120,130,180,0.18)',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.9), inset 0 1px 0 rgba(255,255,255,0.05)',
+        }}>
+          <div className="text-center mb-[2px] tracking-wide text-[#aaaacc] pb-[2px]" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+            Sesión de Hoy (<span className="text-white text-[10px]">{ticker}</span>)
+          </div>
           <div className="flex justify-between items-center pt-[2px]">
-            <span className="flex items-center gap-[3px]"><span className="w-1.5 h-1.5 bg-white inline-block"></span>Últ. Precio</span>
-            <span>{priceInfo ? priceInfo.price.toFixed(2) : '-'}</span>
+            <span className="flex items-center gap-[3px] text-[#888]"><span className="w-1.5 h-1.5 bg-white inline-block"></span>Últ. Precio</span>
+            <span className="text-white">{priceInfo ? priceInfo.price.toFixed(2) : '-'}</span>
           </div>
           <div className="flex justify-between items-center mt-[1px]">
-            <span className="flex items-center gap-[3px] text-[#999]"><span className="w-1.5 h-1.5 bg-[#999] inline-block"></span>Variación %</span>
-            <span className={priceInfo?.change >= 0 ? "text-emerald-400" : "text-[#ff0000]"}>
+            <span className="flex items-center gap-[3px] text-[#888]"><span className="w-1.5 h-1.5 bg-[#999] inline-block"></span>Variación %</span>
+            <span className={priceInfo?.change >= 0 ? "text-emerald-400" : "text-red-400"}>
               {priceInfo ? `${priceInfo.change > 0 ? '+' : ''}${priceInfo.change.toFixed(2)}%` : '-'}
             </span>
           </div>
           <div className="flex justify-between items-center mt-[1px]">
-            <span className="flex items-center gap-[3px]"><span className="w-1.5 h-1.5 bg-[#FFD700] inline-block"></span>SMA 20</span>
+            <span className="flex items-center gap-[3px] text-[#888]"><span className="w-1.5 h-1.5 bg-[#FFD700] inline-block"></span>SMA 20</span>
             <span className="text-[#FFD700]">{priceInfo?.sma20 ? priceInfo.sma20.toFixed(2) : '-'}</span>
           </div>
           <div className="flex justify-between items-center mt-[1px]">
-            <span className="flex items-center gap-[3px]"><span className="w-1.5 h-1.5 bg-[#00E5FF] inline-block"></span>SMA 50</span>
+            <span className="flex items-center gap-[3px] text-[#888]"><span className="w-1.5 h-1.5 bg-[#00E5FF] inline-block"></span>SMA 50</span>
             <span className="text-[#00E5FF]">{priceInfo?.sma50 ? priceInfo.sma50.toFixed(2) : '-'}</span>
           </div>
         </div>
 
-        {/* GRÁFICO APEXCHARTS */}
-        <Chart options={options} series={series} type="line" height="100%" width="100%" />
       </div>
     </div>
   );
@@ -690,30 +696,43 @@ const YahooScoutWidget = () => {
   }, [ticker]);
 
   return (
-    <div className="w-full h-full p-4 flex flex-col font-mono text-white/90 bg-[#151515]">
-      {!data ? (
-        <div className="flex-1 flex items-center justify-center gap-2 text-white/30 text-[10px] uppercase tracking-widest">
-          <svg className="w-4 h-4 text-emerald-400/50 animate-spin" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-          </svg>
-          ANALIZANDO {ticker}...
-        </div>
-      ) : (
-        <>
-          <div className="flex justify-between items-center mb-2 border-b border-emerald-400/20 pb-2 shrink-0">
-            <span className="text-[14px] font-bold text-white/90 tracking-wider tooltip" title={data.name}>
-              {data.ticker}
-            </span>
-            <span className="text-[9px] text-emerald-400 uppercase tracking-widest bg-emerald-400/10 px-2 py-0.5 rounded border border-emerald-400/20 -translate-y-[2px]">
-              RESUMEN IA
-            </span>
+    <div className="w-full h-full p-4 flex flex-col font-mono text-white/90 relative overflow-hidden" style={{
+      background: 'radial-gradient(ellipse at 40% 35%, #1a1a1a 0%, #0e0e0e 55%, #080808 100%)',
+    }}>
+      {/* Vignette */}
+      <div className="absolute inset-0 pointer-events-none z-0" style={{
+        background: 'radial-gradient(ellipse at 55% 50%, transparent 30%, rgba(0,0,0,0.5) 100%)',
+        boxShadow: 'inset 0 0 60px rgba(0,0,0,0.6)',
+      }} />
+      <div className="relative z-10 flex flex-col flex-1 min-h-0">
+        {!data ? (
+          <div className="flex-1 flex items-center justify-center gap-2 text-white/30 text-[10px] uppercase tracking-widest">
+            <svg className="w-4 h-4 text-emerald-400/50 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            ANALIZANDO {ticker}...
           </div>
-          <div className="flex-1 overflow-hidden mt-1 text-[15px] leading-[1.6] text-[#e0e0e0] font-sans pr-1 tracking-wide font-medium flex flex-col">
-            <AnimatedTypingText text={data.summary} isPos={true} speed={40} className="flex-1 h-full" />
-          </div>
-        </>
-      )}
+        ) : (
+          <>
+            <div className="flex justify-between items-center mb-2 pb-2 shrink-0" style={{ borderBottom: '1px solid rgba(52,211,153,0.15)' }}>
+              <span className="text-[14px] font-bold text-white/90 tracking-wider" title={data.name}>
+                {data.ticker}
+              </span>
+              <span className="text-[9px] text-emerald-400 uppercase tracking-widest px-2 py-0.5 rounded -translate-y-[2px]" style={{
+                background: 'rgba(7,9,18,0.85)',
+                border: '1px solid rgba(52,211,153,0.2)',
+                boxShadow: '0 2px 10px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.04)',
+              }}>
+                RESUMEN IA
+              </span>
+            </div>
+            <div className="flex-1 overflow-hidden mt-1 text-[15px] leading-[1.6] text-[#e0e0e0] font-sans pr-1 tracking-wide font-medium flex flex-col">
+              <AnimatedTypingText text={data.summary} isPos={true} speed={40} className="flex-1 h-full" />
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 };
@@ -775,12 +794,12 @@ const TopMovers = () => {
             borderRight: `2px solid ${color}`
           }}
         >
-          {/* Luz dinámica que viaja por la barra usando el index para cascadear */}
+          {/* Luz dinámica que viaja por la barra */}
           <div
-            className="absolute top-0 bottom-0 left-0 w-[100px] bg-gradient-to-r from-transparent via-white/25 to-transparent mix-blend-overlay blur-[2px]"
+            className="absolute top-0 bottom-0 left-0 w-[50px] bg-gradient-to-r from-transparent via-white/[0.07] to-transparent mix-blend-overlay"
             style={{
-              animation: `shimmer-bar 3s infinite cubic-bezier(0.4, 0, 0.2, 1)`,
-              animationDelay: `${index * 0.2}s`
+              animation: `shimmer-bar 2.5s infinite linear`,
+              animationDelay: `${index * 0.4}s`
             }}
           />
         </div>
@@ -792,7 +811,7 @@ const TopMovers = () => {
           </div>
 
           {/* Capa de difuminado (gradient) atrás del texto para que el borde brillante nunca corte visualmente los números */}
-          <div className="absolute right-[-16px] pl-16 pr-4 h-full flex items-center gap-2 bg-gradient-to-l from-[#151515] via-[#151515]/90 to-transparent z-20">
+          <div className="absolute right-[-16px] pl-16 pr-4 h-full flex items-center gap-2 bg-gradient-to-l from-[#0e0e0e] via-[#0e0e0e]/90 to-transparent z-20">
             <span className="text-[12px] font-mono font-semibold drop-shadow-md" style={{ color: color }}>
               {item.change}%
             </span>
@@ -806,17 +825,24 @@ const TopMovers = () => {
   };
 
   return (
-    <div className="w-full h-full flex bg-[#151515] font-sans shadow-[inset_0_0_40px_rgba(0,0,0,0.8)] border-r border-[#111]">
+    <div className="w-full h-full flex font-sans border-r border-[#111] relative overflow-hidden" style={{
+      background: 'radial-gradient(ellipse at 50% 35%, #1a1a1a 0%, #0e0e0e 55%, #080808 100%)',
+    }}>
+      {/* Vignette */}
+      <div className="absolute inset-0 pointer-events-none z-10" style={{
+        background: 'radial-gradient(ellipse at 50% 50%, transparent 30%, rgba(0,0,0,0.52) 100%)',
+        boxShadow: 'inset 0 0 60px rgba(0,0,0,0.65)',
+      }} />
       <style>{`
         @keyframes shimmer-bar {
-          0% { transform: translateX(-150%) skewX(-20deg); opacity: 0; }
-          20% { opacity: 1; }
-          80% { opacity: 1; }
-          100% { transform: translateX(800%) skewX(-20deg); opacity: 0; }
+          0%   { transform: translateX(-100%) skewX(-15deg); opacity: 0; }
+          10%  { opacity: 1; }
+          90%  { opacity: 1; }
+          100% { transform: translateX(1200%) skewX(-15deg); opacity: 0; }
         }
       `}</style>
       {/* Columna Izquierda: Gainers */}
-      <div className="flex-1 flex flex-col border-r border-white/[0.05]">
+      <div className="flex-1 flex flex-col border-r border-white/[0.05] relative z-20">
         <div className="h-[24px] flex items-center px-2 border-b border-white/[0.05] bg-gradient-to-b from-white/[0.03] to-transparent">
           <span className="text-[9px] tracking-[0.15em] font-bold uppercase opacity-75" style={{ color: '#34d399' }}>Mayores Alzas</span>
         </div>
@@ -833,7 +859,7 @@ const TopMovers = () => {
       </div>
 
       {/* Columna Derecha: Losers */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col relative z-20">
         <div className="h-[24px] flex items-center px-2 border-b border-white/[0.05] bg-gradient-to-b from-white/[0.03] to-transparent">
           <span className="text-[9px] tracking-[0.15em] font-bold uppercase opacity-75" style={{ color: '#f87171' }}>Mayores Bajas</span>
         </div>
@@ -991,20 +1017,29 @@ const BubbleSwarm = ({ data, flashMap }) => {
         const els = _sharedDomRefs[node.id];
         if (!els || els.size === 0) return;
         const isPos = node.change >= 0;
-        const baseColor = isPos ? 'rgba(52,211,153,1)' : 'rgba(248,113,113,1)';
+        const baseColor = isPos ? 'rgba(52,211,153,0.85)' : 'rgba(248,113,113,0.85)';
+        const glowAlpha = 0.12 + node.flash * 0.3;
         const glowColor = isPos
-          ? `rgba(52,211,153,${0.2 + node.flash * 0.6})`
-          : `rgba(248,113,113,${0.2 + node.flash * 0.6})`;
-        const transform = `translate3d(${node.x - node.r}px, ${node.y - node.r}px, 0) scale(${1 + node.flash * 0.1})`;
-        const shadow = `0 0 ${10 + node.flash * 20}px ${glowColor}, inset 0 0 10px ${glowColor}`;
+          ? `rgba(52,211,153,${glowAlpha})`
+          : `rgba(248,113,113,${glowAlpha})`;
+        const transform = `translate3d(${node.x - node.r}px, ${node.y - node.r}px, 0) scale(${1 + node.flash * 0.08})`;
+        const colorRgb = isPos ? '52,211,153' : '248,113,113';
+        const bgGradient = `radial-gradient(ellipse at 50% 45%, rgba(${colorRgb}, 0.22) 0%, rgba(${colorRgb}, 0.07) 55%, rgba(0,0,0,0.65) 100%), #0d0d0d`;
+        const shadow = [
+          `0 4px 14px rgba(0,0,0,0.9)`,
+          `0 0 ${6 + node.flash * 16}px ${glowColor}`,
+          `inset 0 -4px 10px rgba(0,0,0,0.85)`,
+        ].join(', ');
         els.forEach(el => {
           if (!el) return;
           el.style.transform = transform;
           el.style.borderColor = baseColor;
           el.style.boxShadow = shadow;
+          el.style.background = bgGradient;
           const span = el.querySelector('.bubble-pct');
           if (span) {
             span.style.color = baseColor;
+            span.style.textShadow = 'none';
             span.textContent = `${isPos ? '+' : ''}${node.change.toFixed(1)}%`;
           }
         });
@@ -1034,32 +1069,64 @@ const BubbleSwarm = ({ data, flashMap }) => {
   };
 
   return (
-    <div className="w-full h-full relative overflow-hidden bg-[#111]">
-      <div ref={labelRef} className="absolute left-4 text-[9px] font-bold text-zinc-500 uppercase tracking-widest pointer-events-none" style={{ top: '6px', zIndex: 1 }}>
-        Argentina
+    <div className="w-full h-full relative overflow-hidden" style={{
+      background: 'radial-gradient(ellipse at 50% -20%, #1a1a1a 0%, #0e0e0e 50%, #080808 100%)',
+    }}>
+
+      {/* Ambient light floor reflection */}
+      <div className="absolute inset-0 pointer-events-none" style={{
+        background: 'linear-gradient(180deg, rgba(52,211,153,0.03) 0%, transparent 45%, rgba(248,113,113,0.02) 100%)',
+      }} />
+
+      {/* "ARGENTINA" header label */}
+      <div ref={labelRef} className="absolute pointer-events-none" style={{
+        top: '7px', left: '12px', zIndex: 2,
+        fontSize: '8px', fontWeight: 800, letterSpacing: '0.26em',
+        color: 'rgba(140,150,200,0.45)',
+        textTransform: 'uppercase',
+        textShadow: '0 0 10px rgba(100,120,255,0.25)',
+      }}>
+        ARGENTINA
       </div>
-      <div className="absolute inset-0 pointer-events-none z-0 flex flex-col justify-between">
-        <div className="h-1/3 bg-gradient-to-b from-[#34d399]/[0.02] to-transparent"></div>
-        <div className="h-1/3 bg-gradient-to-t from-[#f87171]/[0.02] to-transparent"></div>
-      </div>
+
+      {/* 3D Sphere Bubbles */}
       {initialized && _sharedNodes.list.map(node => (
         <div
           key={node.id}
           ref={el => setNodeRef(node.id, el)}
-          className="absolute top-0 left-0 rounded-full flex flex-col items-center justify-center will-change-transform"
+          className="absolute top-0 left-0 rounded-full flex flex-col items-center justify-center will-change-transform overflow-hidden"
           style={{
             width: node.r * 2, height: node.r * 2,
             transform: `translate3d(${node.x - node.r}px, ${node.y - node.r}px, 0)`,
-            backgroundColor: '#161616',
-            border: '1.5px solid rgba(52,211,153,1)',
-            boxShadow: '0 0 10px rgba(52,211,153,0.2), inset 0 0 10px rgba(52,211,153,0.2)',
+            background: 'radial-gradient(ellipse at 50% 45%, rgba(52,211,153,0.32) 0%, rgba(52,211,153,0.10) 55%, rgba(0,0,0,0.65) 100%), #0d0d0d',
+            border: '1px solid rgba(52,211,153,0.6)',
+            boxShadow: '0 4px 14px rgba(0,0,0,0.9), 0 0 6px rgba(52,211,153,0.12), inset 0 -4px 10px rgba(0,0,0,0.85)',
             zIndex: 10,
           }}
         >
-          <span className="text-white font-bold leading-none" style={{ fontSize: `${node.r * 0.45}px` }}>
+          {/* Bottom depth gradient */}
+          <div className="absolute pointer-events-none" style={{
+            bottom: 0, left: 0, right: 0,
+            height: '44%',
+            background: 'linear-gradient(to bottom, transparent, rgba(0,0,0,0.65))',
+            borderRadius: '0 0 50% 50%',
+            zIndex: 2,
+          }} />
+          {/* Ticker label */}
+          <span className="text-white font-bold leading-none" style={{
+            fontSize: `${node.r * 0.45}px`,
+            textShadow: '0 1px 4px rgba(0,0,0,0.98), 0 0 10px rgba(0,0,0,0.5)',
+            position: 'relative', zIndex: 3,
+          }}>
             {node.label}
           </span>
-          <span className="bubble-pct font-mono leading-none mt-[2px]" style={{ fontSize: `${node.r * 0.3}px`, color: 'rgba(52,211,153,1)' }}>
+          {/* % change */}
+          <span className="bubble-pct font-mono leading-none mt-[2px]" style={{
+            fontSize: `${node.r * 0.3}px`,
+            color: 'rgba(52,211,153,1)',
+            textShadow: 'none',
+            position: 'relative', zIndex: 3,
+          }}>
             +0.0%
           </span>
         </div>
@@ -1145,25 +1212,23 @@ const MarketHeatmap = () => {
   }, []);
 
   const renderCell = (item, prefix) => {
-    // Elegant cell backgrounds: Deep dark like Widget 2
-    const bgColor = '#161616';
+    const cellBg = 'radial-gradient(ellipse at 40% 30%, #232323 0%, #141414 60%, #0e0e0e 100%)';
+    const cellShadow = 'inset 0 1px 0 rgba(255,255,255,0.07), inset 0 -2px 6px rgba(0,0,0,0.5), 0 1px 3px rgba(0,0,0,0.6)';
 
-    if (!item) return <div className="flex-1" style={{ backgroundColor: bgColor }} />;
+    if (!item) return <div className="flex-1" style={{ background: cellBg, boxShadow: cellShadow }} />;
 
     const changePct = parseFloat(item.change) || 0;
     const changeAbs = parseFloat(item.change_abs || '0');
     const isPos = changePct >= 0;
 
-    // Professional green/red matching Widget 2 (emerald-400 / red-400)
     const valColor = isPos ? '#34d399' : '#f87171';
-
     const flash = flashMap[`${prefix}_${item.symbol}`];
 
     return (
       <div
         key={item.symbol}
         className={`flex-1 flex flex-col justify-between p-2 relative overflow-hidden transition-all duration-300 ${flash === 'up' ? 'ring-1 ring-inset ring-[#34d399] z-10 brightness-125' : flash === 'down' ? 'ring-1 ring-inset ring-[#f87171] z-10 brightness-125' : ''}`}
-        style={{ backgroundColor: bgColor }}
+        style={{ background: cellBg, boxShadow: cellShadow }}
       >
         {/* Top: Name */}
         <div className="w-full text-left">
@@ -1191,17 +1256,19 @@ const MarketHeatmap = () => {
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-[#111111] divide-y divide-[#303030] font-sans">
+    <div className="w-full h-full flex flex-col divide-y divide-[#252525] font-sans relative overflow-hidden" style={{
+      background: '#111111',
+    }}>
       {data.commodities.length === 0 && data.indices.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center text-[10px] text-zinc-600 uppercase tracking-widest animate-pulse h-full bg-[#161616]">Escaneando mercados globales...</div>
+        <div className="flex-1 flex items-center justify-center text-[10px] text-zinc-600 uppercase tracking-widest animate-pulse h-full">Escaneando mercados globales...</div>
       ) : (
         <>
           {/* Fila 1: Commodities */}
-          <div className="flex-1 flex w-full divide-x divide-[#303030]">
+          <div className="flex-1 flex w-full divide-x divide-[#252525]">
             {data.commodities.length > 0 ? data.commodities.map((item) => renderCell(item, 'comm')) : Array(5).fill(0).map((_, i) => renderCell(null, 'comm'))}
           </div>
           {/* Fila 2: Indices */}
-          <div className="flex-1 flex w-full divide-x divide-[#303030]">
+          <div className="flex-1 flex w-full divide-x divide-[#252525]">
             {data.indices.length > 0 ? data.indices.map((item) => renderCell(item, 'idx')) : Array(5).fill(0).map((_, i) => renderCell(null, 'idx'))}
           </div>
         </>
@@ -1676,8 +1743,10 @@ export default function App() {
       <motion.div
         animate={{ y: isAiActive ? 200 : 0 }}
         transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1], delay: isAiActive ? 0 : 0.3 }}
-        className="w-[576px] h-full flex items-center justify-center shrink-0 border-l border-r border-gray-900 relative overflow-hidden bg-[#111111]"
+        className="w-[576px] h-full flex items-center justify-center shrink-0 border-l border-r border-gray-900 relative overflow-hidden"
+        style={{ background: '#111111' }}
       >
+
         <AnimatePresence mode="wait">
           {currentView === 'LOCAL' ? (
             <motion.div
@@ -1686,11 +1755,17 @@ export default function App() {
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: -50, opacity: 0 }}
               transition={{ duration: 0.5, ease: "easeInOut" }}
-              className="absolute inset-0 w-full h-full flex items-center justify-around px-3 bg-zinc-950/20"
+              className="absolute inset-0 w-full h-full flex items-center justify-around px-3 z-20"
+              style={{ background: 'radial-gradient(ellipse at 50% 40%, #1a1a1a 0%, #0e0e0e 55%, #080808 100%)' }}
             >
+              {/* Vignette — solo para la vista de relojes */}
+              <div className="absolute inset-0 pointer-events-none z-0" style={{
+                background: 'radial-gradient(ellipse at 50% 50%, transparent 35%, rgba(0,0,0,0.55) 100%)',
+                boxShadow: 'inset 0 0 70px rgba(0,0,0,0.65)',
+              }} />
               {/* Mapa del mundo de fondo (SVG realista) */}
               <div
-                className="absolute inset-0 pointer-events-none opacity-[0.12]"
+                className="absolute inset-0 pointer-events-none opacity-[0.08]"
                 style={{
                   backgroundImage: 'url(/world_map.svg)',
                   backgroundSize: '80% auto',
