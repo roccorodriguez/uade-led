@@ -414,28 +414,23 @@ const MarqueeHeadline = ({ text, maxDuration, id }) => {
 };
 
 const AnimatedTypingText = ({ text, isPos = true, speed = 35, className = "max-h-[115px]" }) => {
-  const [displayedText, setDisplayedText] = useState('');
   const containerRef = useRef(null);
+  const textNodeRef = useRef(null);
 
   useEffect(() => {
-    setDisplayedText('');
+    if (textNodeRef.current) textNodeRef.current.textContent = '';
     if (!text) return;
 
     let i = 0;
     const interval = setInterval(() => {
-      setDisplayedText(text.substring(0, i + 1));
       i++;
+      if (textNodeRef.current) textNodeRef.current.textContent = text.substring(0, i);
+      if (containerRef.current) containerRef.current.scrollTop = containerRef.current.scrollHeight;
       if (i >= text.length) clearInterval(interval);
-    }, speed); // Velocidad de tipeo
+    }, speed);
 
     return () => clearInterval(interval);
   }, [text, speed]);
-
-  useEffect(() => {
-    if (containerRef.current) {
-      containerRef.current.scrollTop = containerRef.current.scrollHeight;
-    }
-  }, [displayedText]);
 
   return (
     <div
@@ -445,7 +440,7 @@ const AnimatedTypingText = ({ text, isPos = true, speed = 35, className = "max-h
     >
       <style>{`.ai-scroll-container::-webkit-scrollbar { display: none; }`}</style>
       <div className="relative pb-2">
-        {displayedText}
+        <span ref={textNodeRef} />
         <span className={`inline-block w-[4px] h-[12px] ml-1 animate-pulse align-baseline ${isPos ? 'bg-emerald-400' : 'bg-red-400'}`} />
       </div>
     </div>
@@ -556,9 +551,13 @@ const CompanyDataDisplay = ({ data, active }) => {
     { label: 'INGRESO NETO', key: 'netIncome' },
   ];
 
+  const accentRgb = isPos ? '52,211,153' : '248,113,113';
+  const accentHex = isPos ? '#34d399' : '#f87171';
+
   return (
     <motion.div
-      className="absolute inset-0 z-50 flex bg-[#111111] font-mono overflow-hidden h-[192px]"
+      className="absolute inset-0 z-50 flex font-mono overflow-hidden h-[192px]"
+      style={{ background: 'radial-gradient(ellipse at 50% 50%, #1a1a1a 0%, #0e0e0e 55%, #080808 100%)' }}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
@@ -566,51 +565,81 @@ const CompanyDataDisplay = ({ data, active }) => {
     >
       {/* ── COL 1: Identidad de Empresa (320px) ── */}
       <div
-        className="flex flex-col justify-center px-6 border-r border-[#222] shrink-0 bg-[#111111]"
-        style={{ width: '320px' }}
+        className="flex flex-col justify-center px-6 shrink-0 relative"
+        style={{
+          width: '320px',
+          background: 'radial-gradient(ellipse at 35% 40%, #1a1a1a 0%, #101010 55%, #090909 100%)',
+          borderRight: '1px solid rgba(255,255,255,0.07)',
+          boxShadow: 'inset -1px 0 6px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.06)',
+        }}
       >
         <div className="text-[36px] font-bold text-white leading-none tracking-widest truncate">{ticker}</div>
-        <div className="text-[13px] text-[#999] mt-2 leading-tight truncate">{name}</div>
-        <div className="text-[10px] text-[#555] mt-1 uppercase tracking-wider truncate">{sector} · {exchange}</div>
-        <div className="mt-5 flex items-baseline gap-3">
-          <span className="text-[32px] font-bold text-white leading-none">${fmtNum(price)}</span>
-          <span className={`text-[15px] font-bold ${isPos ? 'text-emerald-400' : 'text-red-400'}`}>
+        <div className="text-[13px] mt-2 leading-tight truncate" style={{ color: 'rgba(190,190,190,0.85)' }}>{name}</div>
+        <div className="text-[10px] mt-1 uppercase tracking-wider truncate" style={{ color: 'rgba(120,120,120,0.7)' }}>{sector} · {exchange}</div>
+        <div className="mt-4 flex items-center gap-3">
+          <span className="text-[32px] font-bold text-white leading-none" style={{ textShadow: '0 2px 10px rgba(0,0,0,0.9)' }}>${fmtNum(price)}</span>
+          <span className="text-[15px] font-bold px-2 py-0.5 rounded-sm" style={{
+            color: accentHex,
+            background: `rgba(${accentRgb},0.1)`,
+            border: `1px solid rgba(${accentRgb},0.3)`,
+            boxShadow: `0 0 14px rgba(${accentRgb},0.18), inset 0 1px 0 rgba(255,255,255,0.06)`,
+          }}>
             {isPos ? '+' : ''}{fmtNum(change_pct)}%
           </span>
         </div>
       </div>
 
-      {/* ── COL 2: KPIs grid comprimido (580px) ── */}
+      {/* ── COL 2: KPIs grid (580px) ── */}
       <div
-        className="flex flex-col justify-center px-8 border-r border-[#222] shrink-0 overflow-hidden"
-        style={{ width: '580px' }}
+        className="flex flex-col justify-center px-8 shrink-0 overflow-hidden"
+        style={{
+          width: '580px',
+          background: 'radial-gradient(ellipse at 50% 35%, #181818 0%, #0f0f0f 55%, #0a0a0a 100%)',
+          borderRight: '1px solid rgba(255,255,255,0.06)',
+          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.05)',
+        }}
       >
-        <div
-          className="grid gap-x-6 gap-y-[5px]"
-          style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}
-        >
-          {kpis.map(({ label, value }) => (
-            <div key={label} className="flex justify-between items-center overflow-hidden border-b border-[#111] pb-[2px]">
-              <span className="text-[8.5px] text-[#666] uppercase tracking-wider leading-none truncate shrink-0 pr-2">{label}</span>
-              <span className="text-[12px] font-bold text-[#eaeaea] leading-tight truncate text-right">{value}</span>
+        <div className="grid gap-x-px gap-y-0" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+          {kpis.map(({ label, value }, i) => (
+            <div key={label} className="flex justify-between items-center overflow-hidden" style={{
+              borderBottom: '1px solid rgba(255,255,255,0.06)',
+              background: i % 2 === 0 ? 'rgba(255,255,255,0.022)' : 'transparent',
+              padding: '5px 6px',
+            }}>
+              <span className="text-[8.5px] uppercase tracking-wider leading-none truncate shrink-0 pr-2" style={{ color: 'rgba(130,130,130,0.75)' }}>{label}</span>
+              <span className="text-[12px] font-bold leading-tight truncate text-right" style={{ color: '#ebebeb' }}>{value}</span>
             </div>
           ))}
         </div>
       </div>
 
-      {/* ── COL 3: Yahoo Scout Animated Text (Flexible width) ── */}
-      <div className={`flex-1 flex flex-col justify-center px-8 border-r border-[#222] relative overflow-hidden bg-[#111111] ${isPos ? 'shadow-[inset_0_0_80px_rgba(52,211,153,0.02)]' : 'shadow-[inset_0_0_80px_rgba(248,113,113,0.02)]'}`}>
-        <div className={`absolute top-4 left-6 flex items-center gap-[6px] shrink-0 px-2.5 py-[4px] border rounded-[2px] glow-pulse ${isPos ? 'bg-emerald-400/10 border-emerald-400/30 shadow-[0_0_15px_rgba(52,211,153,0.15)]' : 'bg-red-400/10 border-red-400/30 shadow-[0_0_15px_rgba(248,113,113,0.15)]'}`}>
-          <span className={`w-[6px] h-[6px] rounded-full animate-pulse ${isPos ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-red-400 shadow-[0_0_8px_#f87171]'}`} />
-          <span className={`text-[11px] font-bold uppercase tracking-[0.25em] ${isPos ? 'text-emerald-400' : 'text-red-400'}`}>Volviendo en 00:{timeLeft.toString().padStart(2, '0')}</span>
+      {/* ── COL 3: Yahoo Scout Animated Text (flexible) ── */}
+      <div className="flex-1 flex flex-col justify-center px-8 relative overflow-hidden" style={{
+        borderRight: '1px solid rgba(255,255,255,0.06)',
+        background: `radial-gradient(ellipse at 30% 45%, rgba(${accentRgb},0.08) 0%, rgba(${accentRgb},0.02) 55%, transparent 75%), radial-gradient(ellipse at 50% 0%, #1a1a1a 0%, transparent 55%), #0c0c0c`,
+        boxShadow: `inset 0 1px 0 rgba(255,255,255,0.05), inset 0 0 50px rgba(${accentRgb},0.03)`,
+      }}>
+        {/* Timer badge */}
+        <div className="absolute top-4 left-6 flex items-center gap-[6px] shrink-0 px-2.5 py-[4px] rounded-sm" style={{
+          background: 'rgba(6,8,14,0.92)',
+          border: `1px solid rgba(${accentRgb},0.32)`,
+          boxShadow: `0 3px 16px rgba(0,0,0,0.85), inset 0 1px 0 rgba(255,255,255,0.06), 0 0 14px rgba(${accentRgb},0.12)`,
+        }}>
+          <span className="w-[6px] h-[6px] rounded-full animate-pulse" style={{
+            background: accentHex,
+            boxShadow: `0 0 8px ${accentHex}`,
+          }} />
+          <span className="text-[11px] font-bold uppercase tracking-[0.25em]" style={{ color: accentHex }}>
+            Volviendo en 00:{timeLeft.toString().padStart(2, '0')}
+          </span>
         </div>
 
         {scout_summary ? (
-          <div className="mt-12 text-[15px] leading-[1.6] text-[#e0e0e0] font-sans pr-4 tracking-wide font-medium">
+          <div className="mt-12 text-[15px] leading-[1.6] font-sans pr-4 tracking-wide font-medium" style={{ color: 'rgba(224,224,224,0.92)' }}>
             <AnimatedTypingText text={scout_summary} isPos={isPos} />
           </div>
         ) : (
-          <div className="mt-12 text-[14px] text-[#444] italic uppercase tracking-widest animate-pulse">
+          <div className="mt-12 text-[14px] italic uppercase tracking-widest animate-pulse" style={{ color: 'rgba(80,80,80,0.8)' }}>
             Analizando datos de mercado...
           </div>
         )}
@@ -618,30 +647,50 @@ const CompanyDataDisplay = ({ data, active }) => {
 
       {/* ── COL 4: Income Statement (580px) ── */}
       <div
-        className="flex flex-col justify-center px-6 shrink-0 bg-[#141414]"
-        style={{ width: '580px' }}
+        className="flex flex-col justify-center px-10 py-4 shrink-0"
+        style={{
+          width: '580px',
+          background: 'radial-gradient(ellipse at 65% 40%, #1a1a1a 0%, #101010 50%, #090909 100%)',
+          boxShadow: 'inset 1px 0 6px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05)',
+        }}
       >
-        <div className="flex items-center text-[9px] uppercase tracking-widest mb-[6px] pb-[5px] border-b border-[#333]">
-          <div className="w-[120px] text-[#555] shrink-0">ESTADO RESULT.</div>
+        {/* Header */}
+        <div className="flex items-center text-[9px] uppercase tracking-widest mb-[5px] pb-[5px] px-3 pt-[5px]" style={{
+          borderBottom: '1px solid rgba(255,255,255,0.05)',
+          background: 'linear-gradient(90deg, rgba(255,255,255,0.02) 0%, transparent 100%)',
+        }}>
+          <div className="w-[120px] shrink-0" style={{ color: 'rgba(120,120,120,0.75)' }}>ESTADO RESULT.</div>
           {income.map((q, i) => (
-            <div key={i} className="flex-1 text-right text-[#777]">{q.period}</div>
+            <div key={i} className="flex-1 text-right" style={{ color: 'rgba(155,155,155,0.85)' }}>{q.period}</div>
           ))}
         </div>
         {incomeRows.map(({ label, key }, rowIdx) => (
           <div
             key={key}
-            className="flex items-center py-[5px]"
-            style={{ backgroundColor: rowIdx % 2 === 0 ? '#161616' : 'transparent' }}
+            className="flex items-center py-[4px] px-3"
+            style={{
+              borderBottom: '1px solid rgba(255,255,255,0.03)',
+              background: rowIdx % 2 === 0
+                ? 'rgba(255,255,255,0.018)'
+                : 'transparent',
+            }}
           >
-            <div className="w-[120px] text-[9px] text-[#888] uppercase tracking-wider shrink-0">{label}</div>
+            <div className="w-[120px] text-[9px] uppercase tracking-wider shrink-0" style={{ color: 'rgba(140,140,140,0.75)' }}>{label}</div>
             {income.map((q, i) => (
-              <div key={i} className="flex-1 text-right text-[12px] font-bold text-[#d0d0d0]">
+              <div key={i} className="flex-1 text-right text-[12px] font-bold" style={{ color: 'rgba(215,215,215,0.92)' }}>
                 {q[key] != null ? `${(q[key] / 1e9).toFixed(2)}B` : 'N/A'}
               </div>
             ))}
           </div>
         ))}
       </div>
+
+      {/* ── Vignette overlay (profundidad 3D) ── */}
+      <div className="absolute inset-0 pointer-events-none" style={{
+        background: 'radial-gradient(ellipse at 50% 50%, transparent 35%, rgba(0,0,0,0.25) 100%)',
+        boxShadow: 'inset 0 0 50px rgba(0,0,0,0.3)',
+        zIndex: 5,
+      }} />
     </motion.div>
   );
 };
@@ -781,17 +830,21 @@ const TopMovers = () => {
 
     // Tonalidades idénticas al Widget 4, pero con un color de fondo más denso para que "llene" más
     const color = isGain ? '#34d399' : '#f87171';
-    const bgOpacity = isGain ? 'rgba(52,211,153,0.18)' : 'rgba(248,113,113,0.18)';
+    const colorRgb = isGain ? '52,211,153' : '248,113,113';
 
     return (
-      <div key={item.symbol} className="flex-1 flex flex-col justify-center px-4 relative overflow-hidden group hover:bg-white/[0.04] transition-colors duration-300">
-        {/* Fondo de la barra restaurado al 100% del ancho del recuadro */}
+      <div key={item.symbol} className="flex-1 flex flex-col justify-center px-4 relative overflow-hidden transition-colors duration-300" style={{
+        background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 35%, rgba(0,0,0,0.25) 100%)',
+        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.05), inset 0 -1px 0 rgba(0,0,0,0.3)',
+      }}>
+        {/* Barra 3D */}
         <div
-          className="absolute top-[2px] bottom-[2px] left-0 transition-all duration-1000 ease-out rounded-r-sm shadow-sm overflow-hidden"
+          className="absolute top-[3px] bottom-[3px] left-0 transition-all duration-1000 ease-out rounded-r-sm overflow-hidden"
           style={{
             width: `${pct}%`,
-            backgroundColor: bgOpacity,
-            borderRight: `2px solid ${color}`
+            background: `linear-gradient(180deg, rgba(${colorRgb},0.32) 0%, rgba(${colorRgb},0.18) 55%, rgba(${colorRgb},0.10) 100%)`,
+            borderRight: `2px solid ${color}`,
+            boxShadow: `2px 0 10px rgba(${colorRgb},0.3), inset 0 1px 0 rgba(255,255,255,0.12)`,
           }}
         >
           {/* Luz dinámica que viaja por la barra */}
@@ -804,15 +857,12 @@ const TopMovers = () => {
           />
         </div>
 
-        {/* Contenido (Z-10 para estar sobre la barra) */}
+        {/* Contenido */}
         <div className="relative z-10 flex justify-between items-center w-full h-full">
-          <div className="flex flex-col z-10">
-            <span className="text-[14px] font-bold text-[#e2e8f0] tracking-wide">{item.symbol}</span>
-          </div>
+          <span className="text-[14px] font-bold tracking-wide" style={{ color: '#e2e8f0' }}>{item.symbol}</span>
 
-          {/* Capa de difuminado (gradient) atrás del texto para que el borde brillante nunca corte visualmente los números */}
           <div className="absolute right-[-16px] pl-16 pr-4 h-full flex items-center gap-2 bg-gradient-to-l from-[#0e0e0e] via-[#0e0e0e]/90 to-transparent z-20">
-            <span className="text-[12px] font-mono font-semibold drop-shadow-md" style={{ color: color }}>
+            <span className="text-[12px] font-mono font-semibold" style={{ color }}>
               {item.change}%
             </span>
             <span className="text-[11px] font-mono text-zinc-500">
@@ -843,8 +893,12 @@ const TopMovers = () => {
       `}</style>
       {/* Columna Izquierda: Gainers */}
       <div className="flex-1 flex flex-col border-r border-white/[0.05] relative z-20">
-        <div className="h-[24px] flex items-center px-2 border-b border-white/[0.05] bg-gradient-to-b from-white/[0.03] to-transparent">
-          <span className="text-[9px] tracking-[0.15em] font-bold uppercase opacity-75" style={{ color: '#34d399' }}>Mayores Alzas</span>
+        <div className="h-[24px] flex items-center px-3 shrink-0" style={{
+          background: 'rgba(8,10,16,0.7)',
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.07), 0 2px 8px rgba(0,0,0,0.5)',
+        }}>
+          <span className="text-[9px] tracking-[0.18em] font-bold uppercase" style={{ color: '#34d399' }}>Mayores Alzas</span>
         </div>
         <div className="flex-1 flex flex-col">
           {data.gainers.length > 0
@@ -860,8 +914,12 @@ const TopMovers = () => {
 
       {/* Columna Derecha: Losers */}
       <div className="flex-1 flex flex-col relative z-20">
-        <div className="h-[24px] flex items-center px-2 border-b border-white/[0.05] bg-gradient-to-b from-white/[0.03] to-transparent">
-          <span className="text-[9px] tracking-[0.15em] font-bold uppercase opacity-75" style={{ color: '#f87171' }}>Mayores Bajas</span>
+        <div className="h-[24px] flex items-center px-3 shrink-0" style={{
+          background: 'rgba(8,10,16,0.7)',
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.07), 0 2px 8px rgba(0,0,0,0.5)',
+        }}>
+          <span className="text-[9px] tracking-[0.18em] font-bold uppercase" style={{ color: '#f87171' }}>Mayores Bajas</span>
         </div>
         <div className="flex-1 flex flex-col">
           {data.losers.length > 0
